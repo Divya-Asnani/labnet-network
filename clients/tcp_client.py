@@ -3,22 +3,32 @@ import socket
 SERVER_IP = "192.168.10.10"
 SERVER_PORT = 5000
 
-client = socket.socket(
+
+client_socket = socket.socket(
     socket.AF_INET,
     socket.SOCK_STREAM
 )
 
 print(f"Connecting to {SERVER_IP}:{SERVER_PORT}")
 
-client.connect((SERVER_IP, SERVER_PORT))
+client_socket.connect((SERVER_IP, SERVER_PORT))
 
-message = "Hello from LabNet client"
+print("Connected to server.")
+print("Type messages. Type 'exit' to close.\n")
 
-client.sendall(message.encode())
+try:
+    while True:
+        message = input("You: ")
 
-response = client.recv(1024)
+        if message.lower() == "exit":
+            break
 
-print("Server response:", response.decode())
+        client_socket.sendall(message.encode())
 
-client.close()
+        response = client_socket.recv(1024)
 
+        print("Server:", response.decode())
+
+finally:
+    client_socket.close()
+    print("Connection closed.")
