@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid-layout">
+    <div class="card">
+        <div class="card-header">File Transfer Configuration</div>
+        <div class="form-group">
+            <label class="form-label">Select File</label>
+            <input type="file" id="file-upload" class="form-input">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Destination</label>
+            <select class="form-input" disabled>
+                <option>LabNet Server (192.168.66.128)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Protocol</label>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="protocol" value="TCP" checked onchange="updateProtocolInfo()"> TCP
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="protocol" value="UDP" onchange="updateProtocolInfo()"> UDP
+                </label>
+            </div>
+        </div>
+        
+        <div class="protocol-info card bg-light" id="protocol-desc">
+            <strong>TCP File Transfer</strong><br>
+            Reliable connection<br>
+            Port 2121
+        </div>
+
+        <button class="btn btn-primary mt-4 w-100" onclick="startFileTransfer()">Send File</button>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Transfer Visualization</div>
+        <div class="transfer-visualizer" id="transfer-viz">
+            <div class="viz-node">
+                <i class="fa-solid fa-laptop"></i>
+                <br>Student Computer
+            </div>
+            
+            <div class="viz-path">
+                <div class="viz-line"></div>
+                <div class="viz-animation-container" id="viz-animation">
+                    <!-- Dynamic ASCII-style animation goes here -->
+                </div>
+            </div>
+
+            <div class="viz-node">
+                <i class="fa-solid fa-server"></i>
+                <br>LabNet Server
+            </div>
+        </div>
+        
+        <div class="transfer-status" id="transfer-log">
+            Ready to transfer.
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/files.js') }}"></script>{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid-layout">
+    <div class="card col-main">
+        <div class="card-header">Network Topology</div>
+        <div class="topology-area">
+            <!-- Server -->
+            <div class="topo-node server">
+                <i class="fa-solid fa-server node-icon"></i>
+                <div class="node-title">LabNet Server</div>
+                <div class="node-ip">192.168.66.128</div>
+                <div class="node-status text-green">ONLINE</div>
+            </div>
+            
+            <div class="topo-connections">
+                <div class="topo-line line-main"></div>
+                <div class="topo-branch top-branch"></div>
+                <div class="topo-branch middle-branch"></div>
+                <div class="topo-branch bottom-branch"></div>
+            </div>
+
+            <!-- Clients -->
+            <div class="topo-clients">
+                <div class="topo-node client">
+                    <i class="fa-solid fa-desktop node-icon"></i>
+                    <div class="node-title">Researcher Workstation</div>
+                    <div class="node-ip">192.168.66.129</div>
+                    <div class="node-status text-green">CONNECTED</div>
+                </div>
+                <div class="topo-node client">
+                    <i class="fa-solid fa-laptop node-icon"></i>
+                    <div class="node-title">Student Workstation</div>
+                    <div class="node-ip">192.168.66.130</div>
+                    <div class="node-status text-green">CONNECTED</div>
+                </div>
+                <div class="topo-node client">
+                    <i class="fa-solid fa-laptop-code node-icon"></i>
+                    <div class="node-title">Faculty Workstation</div>
+                    <div class="node-ip">192.168.66.131</div>
+                    <div class="node-status text-green">CONNECTED</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card col-side">
+        <div class="card-header">Real-time Network Activity</div>
+        <div class="activity-feed" id="activity-feed">
+            <!-- Populated via JS -->
+            <div class="feed-item placeholder">Waiting for network events...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/app.js') }}"></script>{% endblock %}

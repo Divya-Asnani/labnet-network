@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="chat-wrapper">
+    <div class="protocol-banner">
+        <strong>Protocol Indicator:</strong> 
+        <span class="badge badge-tcp">TCP</span>
+        <span class="text-muted text-sm ml-2">Transport: Reliable, connection-oriented | Server: 192.168.66.128 | Port: 5000</span>
+    </div>
+
+    <div class="chat-grid">
+        <!-- Student Window -->
+        <div class="card chat-window">
+            <div class="card-header bg-student">Student Browser Window (192.168.66.130)</div>
+            <div class="chat-history" id="student-history"></div>
+            <div class="chat-controls">
+                <input type="text" id="student-input" placeholder="Type message as Student..." class="form-input">
+                <button class="btn btn-primary" onclick="sendChat('Student', 'student-input')">Send</button>
+            </div>
+        </div>
+
+        <!-- Faculty Window -->
+        <div class="card chat-window">
+            <div class="card-header bg-faculty">Faculty Browser Window (192.168.66.131)</div>
+            <div class="chat-history" id="faculty-history"></div>
+            <div class="chat-controls">
+                <input type="text" id="faculty-input" placeholder="Type message as Faculty..." class="form-input">
+                <button class="btn btn-primary" onclick="sendChat('Faculty', 'faculty-input')">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/chat.js') }}"></script>{% endblock %}

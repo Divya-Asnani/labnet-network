@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid-layout">
+    <div class="card col-main">
+        <div class="card-header">Network Monitoring Statistics</div>
+        <table class="table">
+            <tbody>
+                <tr>
+                    <td class="font-semibold">Server IP</td>
+                    <td id="stat-server-ip">192.168.66.128</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">Server Status</td>
+                    <td id="stat-server-status" class="text-green font-semibold">ONLINE</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">Active Clients</td>
+                    <td id="stat-clients">0</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">TCP Connections</td>
+                    <td id="stat-tcp">0</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">UDP Messages</td>
+                    <td id="stat-udp">0</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">Bytes Transferred</td>
+                    <td id="stat-bytes">0 B</td>
+                </tr>
+                <tr>
+                    <td class="font-semibold">Last Heartbeat</td>
+                    <td id="stat-heartbeat">-</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h3 class="section-title mt-4">Diagnostic Tools</h3>
+        <div class="button-row">
+            <button class="btn btn-secondary" onclick="runDiag('ping')">PING SERVER</button>
+            <button class="btn btn-secondary" onclick="runDiag('traceroute')">TRACE ROUTE</button>
+            <button class="btn btn-secondary" onclick="runDiag('tcp_connections')">TCP CONNECTIONS</button>
+            <button class="btn btn-secondary" onclick="runDiag('udp_status')">UDP STATUS</button>
+        </div>
+        <pre class="terminal" id="diag-terminal">Select a diagnostic tool to run...</pre>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/app.js') }}"></script><script src="{{ url_for('static', filename='js/network.js') }}"></script>{% endblock %}
