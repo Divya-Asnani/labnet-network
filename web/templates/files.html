@@ -1,64 +1,125 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="grid-layout">
+    <!-- Left Panel: File Configuration & Parameters -->
     <div class="card">
-        <div class="card-header">File Transfer Configuration</div>
-        <div class="form-group">
-            <label class="form-label">Select File</label>
-            <input type="file" id="file-upload" class="form-input">
+        <div class="card-header d-flex justify-between align-center">
+            <span><i class="fa-solid fa-file-arrow-up"></i> TCP File Transfer Protocol</span>
+            <span class="badge badge-tcp">TCP:2121</span>
         </div>
+
         <div class="form-group">
-            <label class="form-label">Destination</label>
-            <select class="form-input" disabled>
-                <option>LabNet Server (192.168.66.128)</option>
+            <label class="form-label" for="sender-select">Sender Workstation</label>
+            <select id="sender-select" class="form-input">
+                <option value="Student" selected>Student Workstation (192.168.66.130)</option>
+                <option value="Researcher">Researcher Workstation (192.168.66.128)</option>
+                <option value="Faculty">Faculty Workstation (192.168.66.131)</option>
             </select>
         </div>
+
         <div class="form-group">
-            <label class="form-label">Protocol</label>
+            <label class="form-label">Destination Node</label>
+            <input type="text" class="form-input" value="LabNet Server (192.168.66.128:2121)" readonly>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Select File to Stream</label>
+            <input type="file" id="file-upload" class="form-input" onchange="onFileSelected()">
+        </div>
+
+        <div id="file-meta-card" class="card bg-light mb-3" style="display: none; padding: 0.75rem;">
+            <div class="text-sm">
+                <div><strong>File:</strong> <span id="meta-filename">-</span></div>
+                <div><strong>Size:</strong> <span id="meta-filesize">-</span></div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Transport Protocol</label>
             <div class="radio-group">
                 <label class="radio-label">
-                    <input type="radio" name="protocol" value="TCP" checked onchange="updateProtocolInfo()"> TCP
+                    <input type="radio" name="protocol" value="TCP" checked onchange="updateProtocolInfo()"> TCP (Reliable Stream)
                 </label>
                 <label class="radio-label">
-                    <input type="radio" name="protocol" value="UDP" onchange="updateProtocolInfo()"> UDP
+                    <input type="radio" name="protocol" value="UDP" onchange="updateProtocolInfo()"> UDP (Experimental)
                 </label>
             </div>
         </div>
-        
-        <div class="protocol-info card bg-light" id="protocol-desc">
-            <strong>TCP File Transfer</strong><br>
-            Reliable connection<br>
-            Port 2121
+
+        <div class="protocol-info card bg-light mb-3" id="protocol-desc">
+            <strong>TCP Stream Transfer</strong><br>
+            <span class="text-muted text-sm">Reliable chunk-based stream | Port 2121 | SHA-256 Verified</span>
         </div>
 
-        <button class="btn btn-primary mt-4 w-100" onclick="startFileTransfer()">Send File</button>
+        <button class="btn btn-primary w-100" id="btn-start-transfer" onclick="startRealFileTransfer()">
+            <i class="fa-solid fa-cloud-arrow-up"></i> Send File via TCP
+        </button>
+
+        <!-- Live Transfer Metadata Card -->
+        <div class="card mt-4" id="transfer-metrics-card">
+            <div class="card-header text-sm">Transfer Metrics & Verification</div>
+            <table class="table text-sm">
+                <tbody>
+                    <tr>
+                        <td class="font-semibold" style="width: 40%;">Status</td>
+                        <td id="metric-status"><span class="badge badge-secondary">IDLE</span></td>
+                    </tr>
+                    <tr>
+                        <td class="font-semibold">Actual Progress</td>
+                        <td id="metric-progress">0% (0 B)</td>
+                    </tr>
+                    <tr>
+                        <td class="font-semibold">Transfer Speed</td>
+                        <td id="metric-speed">-</td>
+                    </tr>
+                    <tr>
+                        <td class="font-semibold">SHA-256 Checksum</td>
+                        <td id="metric-sha256" style="word-break: break-all; font-family: monospace; font-size: 0.75rem;">-</td>
+                    </tr>
+                    <tr>
+                        <td class="font-semibold">Server Storage Path</td>
+                        <td id="metric-savepath" style="word-break: break-all; font-family: monospace; font-size: 0.75rem;">-</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 
+    <!-- Right Panel: Visual ASCII Transfer Pipeline -->
     <div class="card">
-        <div class="card-header">Transfer Visualization</div>
+        <div class="card-header d-flex justify-between align-center">
+            <span><i class="fa-solid fa-diagram-project"></i> Socket Stream Pipeline</span>
+            <span id="pipeline-status-badge" class="badge badge-secondary">READY</span>
+        </div>
+
         <div class="transfer-visualizer" id="transfer-viz">
-            <div class="viz-node">
+            <div class="viz-node" id="viz-sender-node">
                 <i class="fa-solid fa-laptop"></i>
-                <br>Student Computer
+                <div id="viz-sender-label">Student Computer</div>
+                <div class="text-muted text-sm">Client VM</div>
             </div>
-            
+
             <div class="viz-path">
                 <div class="viz-line"></div>
                 <div class="viz-animation-container" id="viz-animation">
-                    <!-- Dynamic ASCII-style animation goes here -->
+                    TCP<br>[READY]
                 </div>
             </div>
 
-            <div class="viz-node">
+            <div class="viz-node" id="viz-receiver-node">
                 <i class="fa-solid fa-server"></i>
-                <br>LabNet Server
+                <div>LabNet Server</div>
+                <div class="text-muted text-sm">192.168.66.128:2121</div>
             </div>
         </div>
-        
-        <div class="transfer-status" id="transfer-log">
-            Ready to transfer.
+
+        <div class="mt-3">
+            <div class="font-semibold text-sm mb-1">Live Transfer Log (Socket Stream):</div>
+            <pre class="transfer-status" id="transfer-log">Ready to stream file chunks to TCP file server (Port 2121)...</pre>
         </div>
     </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/files.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/files.js') }}"></script>
+{% endblock %}
