@@ -4,7 +4,6 @@ from dotenv import dotenv_values
 from supabase import create_client, Client
 
 _admin_client: Client = None
-_anon_client: Client = None
 _env_loaded = False
 _config = {}
 
@@ -12,7 +11,6 @@ _config = {}
 def _load_env():
     global _env_loaded, _config
     if not _env_loaded:
-        # Search for .env in repo root or current working dir
         root_dir = Path(__file__).resolve().parent.parent.parent
         env_file = root_dir / '.env'
         if env_file.exists():
@@ -22,14 +20,17 @@ def _load_env():
         _env_loaded = True
 
 
-def get_config_val(key, default=None):
+def get_config_val(key: str, default=None):
     _load_env()
-    return _config.get(key) or os.getenv(key, default)
+    val = _config.get(key)
+    if val is None or val == "":
+        val = os.getenv(key, default)
+    return val
 
 
 def get_supabase_admin() -> Client:
     """
-    Returns a singleton Supabase Client authenticated with the SUPABASE_SERVICE_ROLE_KEY.
+    Returns a singleton Supabase Client authenticated with SUPABASE_SERVICE_ROLE_KEY.
     Used strictly in trusted backend routines (device registration, heartbeat logging,
     event auditing, session persistence). Never exposed to browsers.
     """
@@ -53,15 +54,11 @@ def get_supabase_admin() -> Client:
         return None
 
 
-def get_supabase_anon() -> Client:
+def create_fresh_anon_client() -> Client:
     """
-    Returns a singleton Supabase Client authenticated with the SUPABASE_ANON_KEY.
-    Used for user-initiated auth (sign_up, sign_in_with_password).
+    Creates an isolated Supabase Anon Client per authentication request so concurrent
+    user sign-in/sign-up/sign-out requests never mutate shared GoTrue session state.
     """
-    global _anon_client
-    if _anon_client is not None:
-        return _anon_client
-
     _load_env()
     url = get_config_val('SUPABASE_URL')
     key = get_config_val('SUPABASE_ANON_KEY')
@@ -71,8 +68,12 @@ def get_supabase_anon() -> Client:
         return None
 
     try:
-        _anon_client = create_client(url, key)
-        return _anon_client
+        return create_client(url, key)
     except Exception as e:
-        print(f"[DATABASE] Error initializing Supabase Anon Client: {e}")
+        print(f"[DATABASE] Error creating Supabase Anon Client: {e}")
         return None
+
+
+def get_supabase_anon() -> Client:
+    """Alias returning an isolated anon client for backwards compatibility."""
+    return create_fresh_anon_client()

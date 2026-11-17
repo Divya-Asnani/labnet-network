@@ -19,11 +19,13 @@ import os
 from datetime import datetime
 from .monitoring_service import add_event, add_bytes
 
-# Network server configurations (can be overridden via environment variables)
-TCP_HOST = os.getenv("LABNET_SERVER_IP", "127.0.0.1")
-TCP_PORT = int(os.getenv("LABNET_TCP_PORT", 5000))
-CHAT_PORT = int(os.getenv("LABNET_CHAT_PORT", 5001))
-FILE_PORT = int(os.getenv("LABNET_FILE_PORT", 2121))
+from web.database.supabase_client import get_config_val
+
+# Network server configurations (loaded from .env with safe local loopback default)
+TCP_HOST = os.getenv("TCP_BRIDGE_HOST", "127.0.0.1")
+TCP_PORT = int(get_config_val("TCP_PORT", 5000))
+CHAT_PORT = int(get_config_val("TCP_CHAT_PORT", 5001))
+FILE_PORT = int(get_config_val("TCP_FILE_PORT", 2121))
 
 CHUNK_SIZE = 65536  # 64 KB streaming buffer
 

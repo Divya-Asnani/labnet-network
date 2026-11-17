@@ -117,11 +117,13 @@ def handle_client(client_socket, client_address):
 
     print(f"[{get_timestamp()}] [INFO] Active TCP client count: {total_clients}")
 
-    # Notify all clients of the new connection
+    # Emit presence event separately from user chat messages
     welcome_notice = {
-        "type": "system",
+        "type": "presence",
+        "event": "connected",
         "sender": "LabNet Server",
-        "text": f"New connection from {client_str}",
+        "addr": client_str,
+        "text": f"Socket connected from {client_str}",
         "timestamp": get_timestamp(),
         "active_clients": total_clients
     }
@@ -187,11 +189,13 @@ def handle_client(client_socket, client_address):
         client_socket.close()
         print(f"[{get_timestamp()}] [-] [DISCONNECT] Client {client_str} deregistered. Active clients: {remaining_clients}")
 
-        # Broadcast departure notification
+        # Emit presence departure separately from user chat messages
         leave_notice = {
-            "type": "system",
+            "type": "presence",
+            "event": "disconnected",
             "sender": "LabNet Server",
-            "text": f"Client {client_str} disconnected",
+            "addr": client_str,
+            "text": f"Socket {client_str} disconnected",
             "timestamp": get_timestamp(),
             "active_clients": remaining_clients
         }
