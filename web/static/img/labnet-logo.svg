@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 44" fill="none" role="img" aria-label="LabNet Logo">
+  <!-- Geometric Interconnected Network Emblem -->
+  <g transform="translate(2, 4)">
+    <!-- Outer subtle hexagonal frame -->
+    <rect x="0" y="0" width="36" height="36" rx="9" fill="#0F172A"/>
+    <!-- Network links -->
+    <line x1="18" y1="18" x2="10" y2="11" stroke="#60A5FA" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="18" y1="18" x2="26" y2="11" stroke="#60A5FA" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="18" y1="18" x2="10" y2="26" stroke="#60A5FA" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="18" y1="18" x2="26" y2="26" stroke="#60A5FA" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="10" y1="11" x2="26" y2="11" stroke="#3B82F6" stroke-width="1.1" stroke-opacity="0.55"/>
+    <line x1="10" y1="26" x2="26" y2="26" stroke="#3B82F6" stroke-width="1.1" stroke-opacity="0.55"/>
+    <!-- Peripheral workstation nodes -->
+    <circle cx="10" cy="11" r="2.7" fill="#FFFFFF"/>
+    <circle cx="26" cy="11" r="2.7" fill="#FFFFFF"/>
+    <circle cx="10" cy="26" r="2.7" fill="#FFFFFF"/>
+    <circle cx="26" cy="26" r="2.7" fill="#93C5FD"/>
+    <!-- Central LabNet Hub Node -->
+    <circle cx="18" cy="18" r="4.2" fill="#2563EB" stroke="#FFFFFF" stroke-width="1.5"/>
+  </g>
+  <!-- Editorial Wordmark -->
+  <text x="48" y="29" font-family="'The Seasons', 'Cormorant Garamond', Georgia, serif" font-size="23" font-weight="600" letter-spacing="-0.3" fill="#0F172A">LabNet</text>
+</svg>

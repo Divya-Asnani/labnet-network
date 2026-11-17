@@ -1,159 +1,153 @@
 /**
  * LabNet Real Multi-Protocol File Transfer Client (web/static/js/files.js)
  * =========================================================================
- * Connects frontend to the Flask TCP (:2121) and UDP (:2122) streaming bridges
- * and P2P direct transfer coordinators. All progress calculations, ASCII blocks,
- * and animations are driven by actual byte counters.
+ * Connects the redesigned File Transfer page to genuine backend implementations:
+ *  - TCP Stream (:2121)
+ *  - Reliable Sliding-Window UDP ARQ (:2122)
+ *  - Direct Peer-to-Peer (:2123)
+ * All progress bars and metrics come from real byte streaming events.
  */
 
 let socket = null;
-let transferStartTime = 0;
+let selectedProtocol = "TCP";
+let selectedDestMode = "server";
 
 document.addEventListener("DOMContentLoaded", function () {
-    // Listen for SocketIO progress events if socket.io is loaded
     if (typeof io !== "undefined") {
         socket = io();
-        socket.on("file_progress", function (data) {
-            handleBackendProgress(data);
-        });
+        socket.on("file_progress", handleBackendProgress);
     }
-
-    const senderSelect = document.getElementById("sender-select");
-    if (senderSelect) {
-        senderSelect.addEventListener("change", function () {
-            const senderLabel = document.getElementById("viz-sender-label");
-            if (senderLabel) {
-                senderLabel.textContent = senderSelect.value + " Computer";
-            }
-        });
-    }
-
-    loadServerFiles();
+    loadRegisteredPeers();
 });
 
-function onDestModeChanged() {
-    const mode = document.getElementById("dest-mode").value;
-    const p2pGroup = document.getElementById("p2p-peer-group");
-    const recvLabel = document.getElementById("viz-receiver-label");
-    const recvSub = document.getElementById("viz-receiver-sub");
-
-    if (mode === "p2p") {
-        p2pGroup.style.display = "block";
-        recvLabel.textContent = "Peer Workstation (Direct)";
-        recvSub.textContent = document.getElementById("p2p-target-ip").value + ":" + document.getElementById("p2p-target-port").value;
-    } else {
-        p2pGroup.style.display = "none";
-        recvLabel.textContent = "LabNet Server";
-        updateProtocolInfo();
-    }
-}
-
-function updateProtocolInfo() {
-    const protoRadios = document.querySelectorAll('input[name="protocol"]');
-    let selected = "TCP";
-    protoRadios.forEach(r => { if (r.checked) selected = r.value; });
-
-    const desc = document.getElementById("protocol-desc");
-    const badge = document.getElementById("header-protocol-badge");
-    const recvSub = document.getElementById("viz-receiver-sub");
-    const btn = document.getElementById("btn-start-transfer");
-
-    if (selected === "TCP") {
-        desc.innerHTML = `<strong>TCP Stream Transfer</strong><br><span class="text-muted text-sm">Reliable chunk-based stream | Port 2121 | SHA-256 Verified</span>`;
-        if (badge) badge.textContent = "TCP:2121";
-        if (recvSub && document.getElementById("dest-mode").value !== "p2p") recvSub.textContent = "192.168.66.128:2121";
-        if (btn) btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Send File via TCP`;
-    } else {
-        desc.innerHTML = `<strong>Reliable UDP File Transfer</strong><br><span class="text-muted text-sm">Sliding-Window ARQ | Port 2122 | Packet Sequencing & Retransmissions</span>`;
-        if (badge) badge.textContent = "UDP:2122";
-        if (recvSub && document.getElementById("dest-mode").value !== "p2p") recvSub.textContent = "192.168.66.128:2122";
-        if (btn) btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Send File via UDP`;
-    }
-}
-
-function onFileSelected() {
-    const fileInput = document.getElementById("file-upload");
-    const metaCard = document.getElementById("file-meta-card");
-    const fnEl = document.getElementById("meta-filename");
-    const fsEl = document.getElementById("meta-filesize");
-
-    if (fileInput && fileInput.files.length > 0) {
-        const file = fileInput.files[0];
-        fnEl.textContent = file.name;
-        fsEl.textContent = formatBytes(file.size);
-        metaCard.style.display = "block";
-    } else {
-        metaCard.style.display = "none";
-    }
-}
-
 function formatBytes(bytes) {
-    if (bytes === 0) return "0 Bytes";
+    if (!bytes) return "0 B";
     const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
-function generateAsciiBlocks(percent) {
-    const totalBlocks = 12;
-    const filledBlocks = Math.round((percent / 100) * totalBlocks);
-    const emptyBlocks = totalBlocks - filledBlocks;
-    return "█".repeat(Math.max(0, filledBlocks)) + "░".repeat(Math.max(0, emptyBlocks));
+function selectTransferMode(proto, destMode) {
+    selectedProtocol = proto;
+    selectedDestMode = destMode;
+
+    document.getElementById("card-proto-tcp").classList.toggle("selected", proto === "TCP" && destMode === "server");
+    document.getElementById("card-proto-udp").classList.toggle("selected", proto === "UDP" && destMode === "server");
+    document.getElementById("card-proto-p2p").classList.toggle("selected", destMode === "p2p");
+
+    const p2pBox = document.getElementById("p2p-config-box");
+    const badge = document.getElementById("active-proto-badge");
+    const pathEl = document.getElementById("metric-path");
+    const btn = document.getElementById("btn-start-transfer");
+
+    if (destMode === "p2p") {
+        p2pBox.style.display = "block";
+        badge.className = "badge badge-p2p";
+        badge.textContent = "DIRECT P2P :2123";
+        const peerIp = document.getElementById("p2p-target-ip").value || "<peer-ip>";
+        const peerPort = document.getElementById("p2p-target-port").value || "2123";
+        pathEl.textContent = `Workstation → ${peerIp}:${peerPort} (Direct P2P)`;
+        btn.innerHTML = `<i class="fa-solid fa-share-nodes"></i><span>Transmit Directly to Peer (:2123)</span>`;
+    } else if (proto === "UDP") {
+        p2pBox.style.display = "none";
+        badge.className = "badge badge-udp";
+        badge.textContent = "RELIABLE UDP :2122";
+        pathEl.textContent = `Client → ${window.LABNET_SERVER_IP}:2122 (Sliding-Window ARQ)`;
+        btn.innerHTML = `<i class="fa-solid fa-bolt"></i><span>Transmit File via Reliable UDP (:2122)</span>`;
+    } else {
+        p2pBox.style.display = "none";
+        badge.className = "badge badge-tcp";
+        badge.textContent = "TCP :2121";
+        pathEl.textContent = `Client → ${window.LABNET_SERVER_IP}:2121 (TCP Stream)`;
+        btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i><span>Transmit File via TCP (:2121)</span>`;
+    }
+}
+
+async function loadRegisteredPeers() {
+    const sel = document.getElementById("p2p-peer-select");
+    if (!sel) return;
+    try {
+        const resp = await fetch("/api/peers/list");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const peers = data.peers || [];
+        sel.innerHTML = `<option value="">— ${peers.length ? "Select a discovered peer" : "No listening peers discovered yet — enter IP manually"} —</option>`;
+        peers.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = `${p.ip}:${p.port}`;
+            opt.textContent = `${p.peer_name} (${p.ip}:${p.port}) — ${p.status}`;
+            sel.appendChild(opt);
+        });
+    } catch (e) {
+        console.warn("Peer discovery error:", e);
+    }
+}
+
+function onPeerSelected() {
+    const val = document.getElementById("p2p-peer-select").value;
+    if (!val) return;
+    const [ip, port] = val.split(":");
+    if (ip) document.getElementById("p2p-target-ip").value = ip;
+    if (port) document.getElementById("p2p-target-port").value = port;
+    selectTransferMode("TCP", "p2p");
+}
+
+function onFileSelected() {
+    const fileInput = document.getElementById("file-upload");
+    const box = document.getElementById("selected-file-summary");
+    if (fileInput && fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        document.getElementById("meta-filename").textContent = file.name;
+        document.getElementById("meta-filesize").textContent = formatBytes(file.size);
+        box.style.display = "block";
+    } else {
+        box.style.display = "none";
+    }
 }
 
 function startRealFileTransfer() {
     const fileInput = document.getElementById("file-upload");
     if (!fileInput || fileInput.files.length === 0) {
-        alert("Please select a file to transfer first.");
+        alert("Please choose a file to transfer first.");
         return;
     }
 
     const file = fileInput.files[0];
-    const protoRadios = document.querySelectorAll('input[name="protocol"]');
-    let protocol = "TCP";
-    protoRadios.forEach(r => { if (r.checked) protocol = r.value; });
-
-    const destMode = document.getElementById("dest-mode").value;
-    const senderSelect = document.getElementById("sender-select");
-    const sender = senderSelect ? senderSelect.value : "Student";
-    const senderIp = (sender === "Student") ? "192.168.66.130" : "192.168.66.128";
-
-    // UI elements
-    const vizAnim = document.getElementById("viz-animation");
-    const transferLog = document.getElementById("transfer-log");
-    const statusBadge = document.getElementById("pipeline-status-badge");
-    const metricStatus = document.getElementById("metric-status");
-    const metricProg = document.getElementById("metric-progress");
-    const metricSpeed = document.getElementById("metric-speed");
-    const metricSha = document.getElementById("metric-sha256");
-    const metricPath = document.getElementById("metric-savepath");
     const btn = document.getElementById("btn-start-transfer");
+    const logEl = document.getElementById("transfer-log");
+    const statusBadge = document.getElementById("metric-status-badge");
+    const barFill = document.getElementById("progress-bar-fill");
+
+    if (selectedDestMode === "p2p") {
+        const targetIp = (document.getElementById("p2p-target-ip").value || "").trim();
+        if (!targetIp) {
+            alert("Please enter or select a destination peer IP address.");
+            return;
+        }
+    }
 
     btn.disabled = true;
     statusBadge.className = "badge badge-primary";
     statusBadge.textContent = "STREAMING";
-    metricStatus.innerHTML = `<span class="badge badge-primary">IN PROGRESS</span>`;
-    metricProg.textContent = "0% (0 B)";
-    metricSpeed.textContent = "Calculating...";
-    metricSha.textContent = "Computing SHA-256...";
-    metricPath.textContent = "Server buffer...";
+    barFill.style.width = "0%";
+    document.getElementById("metric-progress").textContent = "0% (0 B)";
+    document.getElementById("metric-speed").textContent = "Measuring...";
+    document.getElementById("metric-retries").textContent = "0";
+    document.getElementById("metric-sha256").textContent = "Computing SHA-256...";
+    document.getElementById("metric-savepath").textContent = "In transit...";
 
-    transferStartTime = performance.now();
-    transferLog.textContent = `[INIT] Handshaking ${protocol} file stream for '${file.name}' (${formatBytes(file.size)})...\n`;
-    vizAnim.className = "viz-animation-container active";
-    vizAnim.innerHTML = `${protocol}<br>[░░░░░░░░░░░░]`;
+    const modeLabel = selectedDestMode === "p2p" ? "DIRECT P2P (:2123)" : `${selectedProtocol} (${selectedProtocol === "UDP" ? ":2122" : ":2121"})`;
+    logEl.textContent = `[INIT] Initiating ${modeLabel} transfer for '${file.name}' (${formatBytes(file.size)})...\n`;
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("protocol", protocol);
-    formData.append("sender", sender);
-    formData.append("sender_ip", senderIp);
-    formData.append("dest_mode", destMode);
+    formData.append("protocol", selectedProtocol);
+    formData.append("dest_mode", selectedDestMode);
 
-    if (destMode === "p2p") {
-        formData.append("target_ip", document.getElementById("p2p-target-ip").value);
-        formData.append("target_port", document.getElementById("p2p-target-port").value);
+    if (selectedDestMode === "p2p") {
+        formData.append("target_ip", document.getElementById("p2p-target-ip").value.trim());
+        formData.append("target_port", document.getElementById("p2p-target-port").value.trim() || "2123");
     }
 
     const xhr = new XMLHttpRequest();
@@ -161,42 +155,44 @@ function startRealFileTransfer() {
 
     xhr.onload = function () {
         btn.disabled = false;
-        vizAnim.className = "viz-animation-container";
+        let parsed = {};
+        try { parsed = JSON.parse(xhr.responseText); } catch (e) {}
 
-        if (xhr.status === 200) {
-            try {
-                const resp = JSON.parse(xhr.responseText);
-                const res = resp.result || {};
-                const verified = res.verified;
-                const sha = res.sha256 || res.local_sha256 || "N/A";
+        if (xhr.status === 200 && parsed.status === "completed") {
+            const res = parsed.result || {};
+            const verified = Boolean(res.verified);
+            const sha = res.sha256 || res.local_sha256 || "—";
 
+            barFill.style.width = "100%";
+            document.getElementById("metric-progress").textContent = `100% (${formatBytes(file.size)})`;
+            document.getElementById("metric-speed").textContent = `${res.speed_kbps || 0} KB/s`;
+            document.getElementById("metric-retries").textContent = String(res.total_retransmissions ?? res.retransmissions ?? 0);
+            document.getElementById("metric-sha256").textContent = sha;
+            document.getElementById("metric-savepath").textContent = res.save_path || "uploads/" + file.name;
+
+            if (verified) {
                 statusBadge.className = "badge badge-success";
                 statusBadge.textContent = "VERIFIED";
-                vizAnim.innerHTML = `${protocol}<br>[COMPLETED]`;
-                metricStatus.innerHTML = `<span class="badge badge-success">COMPLETED (SHA-256 MATCH)</span>`;
-                metricProg.textContent = `100.0% (${formatBytes(file.size)})`;
-                metricSpeed.textContent = `${res.speed_kbps || '0'} KB/s`;
-                metricSha.textContent = sha;
-                metricPath.textContent = res.save_path || "uploads/" + file.name;
-
-                transferLog.textContent += `[SUCCESS] Protocol: ${protocol}\n`;
-                transferLog.textContent += `[VERIFIED] SHA-256: ${sha}\n`;
-                transferLog.textContent += `[SPEED] Throughput: ${res.speed_kbps || '0'} KB/s\n`;
-                if (res.retransmissions !== undefined) {
-                    transferLog.textContent += `[ARQ] Retransmissions: ${res.retransmissions}\n`;
-                }
-                transferLog.textContent += `[STATUS] Saved to: ${res.save_path || 'uploads/' + file.name}\n`;
-                transferLog.scrollTop = transferLog.scrollHeight;
-
-                loadServerFiles();
-            } catch (e) {
-                transferLog.textContent += `[ERROR] Failed to parse response: ${e}\n`;
+                logEl.textContent += `[SUCCESS] Transfer verified via SHA-256 checksum match.\n`;
+            } else {
+                statusBadge.className = "badge badge-danger";
+                statusBadge.textContent = "CHECKSUM MISMATCH";
+                logEl.textContent += `[ERROR] SHA-256 verification failed!\n`;
             }
+            logEl.textContent += `[SHA-256] ${sha}\n`;
+            logEl.textContent += `[SPEED]   ${res.speed_kbps || 0} KB/s\n`;
+            if (res.total_retransmissions !== undefined) {
+                logEl.textContent += `[ARQ]     Retransmissions: ${res.total_retransmissions}\n`;
+            }
+            if (res.db_warning) {
+                logEl.textContent += `[DB WARN] ${res.db_warning}\n`;
+            }
+            logEl.scrollTop = logEl.scrollHeight;
         } else {
             statusBadge.className = "badge badge-danger";
             statusBadge.textContent = "FAILED";
-            metricStatus.innerHTML = `<span class="badge badge-danger">FAILED</span>`;
-            transferLog.textContent += `[FATAL] Server responded with error HTTP ${xhr.status}: ${xhr.responseText}\n`;
+            logEl.textContent += `[ERROR HTTP ${xhr.status}] ${parsed.error || xhr.responseText}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
         }
     };
 
@@ -204,73 +200,25 @@ function startRealFileTransfer() {
         btn.disabled = false;
         statusBadge.className = "badge badge-danger";
         statusBadge.textContent = "NETWORK ERROR";
-        metricStatus.innerHTML = `<span class="badge badge-danger">SOCKET ERROR</span>`;
-        transferLog.textContent += `[FATAL] Network error connecting to LabNet File Gateway.\n`;
+        logEl.textContent += `[FATAL] Failed to reach LabNet upload endpoint.\n`;
     };
 
     xhr.send(formData);
 }
 
 function handleBackendProgress(data) {
-    const metricProg = document.getElementById("metric-progress");
-    const metricSpeed = document.getElementById("metric-speed");
-    const vizAnim = document.getElementById("viz-animation");
-    const transferLog = document.getElementById("transfer-log");
+    if (!data || data.percent === undefined) return;
+    const pct = Math.min(100, Math.max(0, parseFloat(data.percent)));
+    const barFill = document.getElementById("progress-bar-fill");
+    if (barFill) barFill.style.width = pct + "%";
 
-    if (data.percent !== undefined) {
-        const pct = parseFloat(data.percent);
-        const ascii = generateAsciiBlocks(pct);
-        if (metricProg) {
-            metricProg.textContent = `${pct.toFixed(1)}% (${formatBytes(data.bytes_sent || 0)})`;
-        }
-        if (metricSpeed && data.speed_kbps) {
-            metricSpeed.textContent = `${data.speed_kbps} KB/s`;
-        }
-        if (vizAnim) {
-            vizAnim.innerHTML = `STREAM<br>[${ascii}]`;
-        }
-        if (transferLog && (pct % 20 === 0 || pct === 100)) {
-            transferLog.textContent += `[STREAM] ${pct.toFixed(1)}% - ${data.speed_kbps || ''} KB/s\n`;
-            transferLog.scrollTop = transferLog.scrollHeight;
-        }
+    const progEl = document.getElementById("metric-progress");
+    if (progEl) progEl.textContent = `${pct.toFixed(1)}% (${formatBytes(data.bytes_sent || 0)})`;
+
+    if (data.speed_kbps !== undefined) {
+        document.getElementById("metric-speed").textContent = `${data.speed_kbps} KB/s`;
     }
-}
-
-async function loadServerFiles() {
-    const tbody = document.getElementById("repo-tbody");
-    if (!tbody) return;
-
-    try {
-        const resp = await fetch("/api/files/list");
-        const data = await resp.json();
-        const files = data.files || [];
-
-        if (files.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="5" class="text-muted text-center" style="padding: 12px;">No stored files in uploads/ directory yet.</td></tr>`;
-            return;
-        }
-
-        let html = "";
-        files.forEach(f => {
-            const shortSha = f.sha256 ? f.sha256.substring(0, 12) + "..." : "Pending";
-            html += `
-            <tr style="border-bottom: 1px solid #f1f5f9;">
-                <td style="padding: 8px 12px; font-weight: 500;">
-                    <i class="fa-regular fa-file" style="color: #64748b; margin-right: 6px;"></i> ${f.filename}
-                </td>
-                <td style="padding: 8px 12px; color: #475569;">${formatBytes(f.size)}</td>
-                <td style="padding: 8px 12px;"><span class="badge ${f.protocol === 'UDP' ? 'badge-primary' : 'badge-tcp'}" style="font-size: 0.75rem;">${f.protocol || 'TCP'}</span></td>
-                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.75rem; color: #64748b;">${shortSha}</td>
-                <td style="padding: 8px 12px;">
-                    <a href="/api/files/download/${encodeURIComponent(f.filename)}" class="btn btn-secondary text-sm" style="text-decoration: none; padding: 4px 8px; font-size: 0.75rem;" download>
-                        <i class="fa-solid fa-download"></i> Download
-                    </a>
-                </td>
-            </tr>
-            `;
-        });
-        tbody.innerHTML = html;
-    } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-danger text-center" style="padding: 12px;">Failed to load files: ${e.message}</td></tr>`;
+    if (data.retries !== undefined) {
+        document.getElementById("metric-retries").textContent = String(data.retries);
     }
 }

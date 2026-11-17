@@ -1,167 +1,147 @@
 {% extends "base.html" %}
+{% block title %}File Transfer{% endblock %}
+{% block page_title %}Multi-Protocol File Transfer{% endblock %}
+{% block page_subtitle %}Stream files over raw TCP (:2121), Reliable Sliding-Window UDP (:2122), or Direct P2P (:2123){% endblock %}
+
+{% block topbar_actions %}
+<a href="/repository" class="btn btn-secondary btn-sm">
+    <i class="fa-regular fa-folder-open"></i> Open File Repository
+</a>
+{% endblock %}
+
 {% block content %}
-<div class="grid-layout">
-    <!-- Left Panel: File Configuration & Parameters -->
+<div class="grid-main-side">
+    <!-- Left Card: Transfer Configuration -->
     <div class="card">
-        <div class="card-header d-flex justify-between align-center">
-            <span><i class="fa-solid fa-file-arrow-up"></i> Multi-Protocol File Transfer</span>
-            <span id="header-protocol-badge" class="badge badge-tcp">TCP:2121 / UDP:2122</span>
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-arrow-up-from-bracket"></i> Configure Transfer</div>
+            <span id="active-proto-badge" class="badge badge-tcp">TCP :2121</span>
         </div>
-
-        <div class="form-group">
-            <label class="form-label" for="sender-select">Sender Workstation</label>
-            <select id="sender-select" class="form-input">
-                <option value="Student" selected>Student Workstation (192.168.66.130)</option>
-                <option value="Researcher">Researcher Workstation (192.168.66.128)</option>
-                <option value="Faculty">Faculty Workstation (192.168.66.131)</option>
-            </select>
-        </div>
-
-        <div class="form-group">
-            <label class="form-label">Transfer Mode & Destination</label>
-            <select id="dest-mode" class="form-input" onchange="onDestModeChanged()">
-                <option value="server" selected>Central LabNet Server (192.168.66.128)</option>
-                <option value="p2p">Direct Peer-to-Peer (Bypass Central Server)</option>
-            </select>
-        </div>
-
-        <div id="p2p-peer-group" class="form-group" style="display: none;">
-            <label class="form-label">Target Peer Node (P2P)</label>
-            <div style="display: flex; gap: 8px;">
-                <input type="text" id="p2p-target-ip" class="form-input" style="flex: 2;" placeholder="192.168.66.130" value="192.168.66.130">
-                <input type="number" id="p2p-target-port" class="form-input" style="flex: 1;" placeholder="2123" value="2123">
+        <div class="card-body">
+            <div class="form-group">
+                <label class="form-label">Select Transport Protocol &amp; Route</label>
+                <div class="proto-cards">
+                    <div class="proto-card selected" id="card-proto-tcp" onclick="selectTransferMode('TCP', 'server')">
+                        <div class="proto-card-title">
+                            <span>TCP Stream</span>
+                            <span class="badge badge-tcp">2121</span>
+                        </div>
+                        <div class="proto-card-desc">64 KB chunks • Node → Central Server • SHA-256</div>
+                    </div>
+                    <div class="proto-card" id="card-proto-udp" onclick="selectTransferMode('UDP', 'server')">
+                        <div class="proto-card-title">
+                            <span>Reliable UDP</span>
+                            <span class="badge badge-udp">2122</span>
+                        </div>
+                        <div class="proto-card-desc">Sliding-Window ARQ • ACKs &amp; Retransmissions</div>
+                    </div>
+                    <div class="proto-card" id="card-proto-p2p" onclick="selectTransferMode('TCP', 'p2p')">
+                        <div class="proto-card-title">
+                            <span>Direct P2P</span>
+                            <span class="badge badge-p2p">2123</span>
+                        </div>
+                        <div class="proto-card-desc">Node → Peer directly • Bypasses Server Storage</div>
+                    </div>
+                </div>
             </div>
-            <span class="text-muted text-sm">File contents travel directly between workstations over LAN.</span>
-        </div>
 
-        <div class="form-group">
-            <label class="form-label">Select File to Stream</label>
-            <input type="file" id="file-upload" class="form-input" onchange="onFileSelected()">
-        </div>
-
-        <div id="file-meta-card" class="card bg-light mb-3" style="display: none; padding: 0.75rem;">
-            <div class="text-sm">
-                <div><strong>File:</strong> <span id="meta-filename">-</span></div>
-                <div><strong>Size:</strong> <span id="meta-filesize">-</span></div>
+            <!-- P2P Target Configuration -->
+            <div id="p2p-config-box" style="display: none; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 600; font-size: 13px;"><i class="fa-solid fa-share-nodes" style="color: var(--p2p-color);"></i> Direct Peer Destination</span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="loadRegisteredPeers()">
+                        <i class="fa-solid fa-rotate"></i> Discover Peers
+                    </button>
+                </div>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <label class="form-label" for="p2p-peer-select">Registered Peers (from Coordinator)</label>
+                    <select id="p2p-peer-select" class="form-select" onchange="onPeerSelected()">
+                        <option value="">— Enter manual peer IP or discover listening nodes —</option>
+                    </select>
+                </div>
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+                    <div>
+                        <label class="form-label" for="p2p-target-ip">Peer IP Address</label>
+                        <input type="text" id="p2p-target-ip" class="form-input mono" placeholder="192.168.66.130">
+                    </div>
+                    <div>
+                        <label class="form-label" for="p2p-target-port">Peer Port</label>
+                        <input type="number" id="p2p-target-port" class="form-input mono" value="2123">
+                    </div>
+                </div>
+                <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px;">
+                    For true VM2 → VM3 cross-workstation bypass, run <span class="mono">python clients/p2p_node.py --listen --port 2123</span> on the receiver and <span class="mono">--send</span> on the sender.
+                </div>
             </div>
-        </div>
 
-        <div class="form-group">
-            <label class="form-label">Transport Protocol</label>
-            <div class="radio-group">
-                <label class="radio-label">
-                    <input type="radio" name="protocol" value="TCP" checked onchange="updateProtocolInfo()"> TCP (Stream: Port 2121)
-                </label>
-                <label class="radio-label">
-                    <input type="radio" name="protocol" value="UDP" onchange="updateProtocolInfo()"> UDP (Sliding-Window ARQ: Port 2122)
-                </label>
+            <div class="form-group">
+                <label class="form-label" for="file-upload">Choose File to Transmit</label>
+                <input type="file" id="file-upload" class="form-input" onchange="onFileSelected()">
             </div>
-        </div>
 
-        <div class="protocol-info card bg-light mb-3" id="protocol-desc">
-            <strong>TCP Stream Transfer</strong><br>
-            <span class="text-muted text-sm">Reliable chunk-based stream | Port 2121 | SHA-256 Verified</span>
-        </div>
+            <div id="selected-file-summary" style="display: none; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span><strong>File:</strong> <span id="meta-filename">—</span></span>
+                    <span class="mono" style="color: var(--text-muted);" id="meta-filesize">—</span>
+                </div>
+            </div>
 
-        <button class="btn btn-primary w-100" id="btn-start-transfer" onclick="startRealFileTransfer()">
-            <i class="fa-solid fa-cloud-arrow-up"></i> Start Transfer
-        </button>
-
-        <!-- Live Transfer Metadata Card -->
-        <div class="card mt-4" id="transfer-metrics-card">
-            <div class="card-header text-sm">Transfer Metrics & Verification</div>
-            <table class="table text-sm">
-                <tbody>
-                    <tr>
-                        <td class="font-semibold" style="width: 40%;">Status</td>
-                        <td id="metric-status"><span class="badge badge-secondary">IDLE</span></td>
-                    </tr>
-                    <tr>
-                        <td class="font-semibold">Actual Progress</td>
-                        <td id="metric-progress">0% (0 B)</td>
-                    </tr>
-                    <tr>
-                        <td class="font-semibold">Transfer Speed</td>
-                        <td id="metric-speed">-</td>
-                    </tr>
-                    <tr>
-                        <td class="font-semibold">SHA-256 Checksum</td>
-                        <td id="metric-sha256" style="word-break: break-all; font-family: monospace; font-size: 0.75rem;">-</td>
-                    </tr>
-                    <tr>
-                        <td class="font-semibold">Server Storage Path</td>
-                        <td id="metric-savepath" style="word-break: break-all; font-family: monospace; font-size: 0.75rem;">-</td>
-                    </tr>
-                </tbody>
-            </table>
+            <button type="button" id="btn-start-transfer" class="btn btn-primary btn-block" style="padding: 11px;" onclick="startRealFileTransfer()">
+                <i class="fa-solid fa-paper-plane"></i>
+                <span>Transmit File via TCP (:2121)</span>
+            </button>
         </div>
     </div>
 
-    <!-- Right Panel: Visual Pipeline & Server File Repository -->
-    <div>
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-between align-center">
-                <span><i class="fa-solid fa-diagram-project"></i> Socket Stream Pipeline</span>
-                <span id="pipeline-status-badge" class="badge badge-secondary">READY</span>
-            </div>
-
-            <div class="transfer-visualizer" id="transfer-viz">
-                <div class="viz-node" id="viz-sender-node">
-                    <i class="fa-solid fa-laptop"></i>
-                    <div id="viz-sender-label">Student Computer</div>
-                    <div class="text-muted text-sm">Client VM</div>
-                </div>
-
-                <div class="viz-path">
-                    <div class="viz-line"></div>
-                    <div class="viz-animation-container" id="viz-animation">
-                        READY
-                    </div>
-                </div>
-
-                <div class="viz-node" id="viz-receiver-node">
-                    <i class="fa-solid fa-server"></i>
-                    <div id="viz-receiver-label">LabNet Server</div>
-                    <div class="text-muted text-sm" id="viz-receiver-sub">192.168.66.128:2121</div>
-                </div>
-            </div>
-
-            <div class="mt-3">
-                <div class="font-semibold text-sm mb-1">Live Transfer Log (Socket Stream):</div>
-                <pre class="transfer-status" id="transfer-log">Ready to initiate file stream...</pre>
-            </div>
+    <!-- Right Card: Live Transfer Telemetry & SHA-256 Receipt -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-gauge-high"></i> Transfer Telemetry</div>
+            <span id="metric-status-badge" class="badge badge-neutral">IDLE</span>
         </div>
+        <div class="card-body">
+            <div style="margin-bottom: 14px;">
+                <div style="display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 6px;">
+                    <span style="font-weight: 600;">Actual Stream Progress</span>
+                    <span class="mono" id="metric-progress">0% (0 B)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progress-bar-fill"></div>
+                </div>
+            </div>
 
-        <!-- Section 5.7: Server File Repository & Remote Retrieval -->
-        <div class="card">
-            <div class="card-header d-flex justify-between align-center">
-                <span><i class="fa-solid fa-folder-open"></i> Server File Repository (uploads/)</span>
-                <button class="btn btn-secondary text-sm" onclick="loadServerFiles()" style="padding: 4px 8px;">
-                    <i class="fa-solid fa-rotate"></i> Refresh
-                </button>
-            </div>
-            <div class="card-body" style="padding: 12px; overflow-x: auto;">
-                <table class="table text-sm" style="width: 100%;" id="repo-table">
-                    <thead>
-                        <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
-                            <th>Filename</th>
-                            <th>Size</th>
-                            <th>Protocol</th>
-                            <th>SHA-256</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="repo-tbody">
-                        <tr>
-                            <td colspan="5" class="text-muted text-center" style="padding: 12px;">Loading repository files...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+            <table class="data-table" style="margin-bottom: 16px;">
+                <tbody>
+                    <tr>
+                        <td style="color: var(--text-muted); width: 38%;">Transfer Path</td>
+                        <td id="metric-path" class="mono">Client → {{ server_ip }}:2121</td>
+                    </tr>
+                    <tr>
+                        <td style="color: var(--text-muted);">Throughput</td>
+                        <td id="metric-speed" class="mono">—</td>
+                    </tr>
+                    <tr>
+                        <td style="color: var(--text-muted);">UDP Retransmissions</td>
+                        <td id="metric-retries" class="mono">0</td>
+                    </tr>
+                    <tr>
+                        <td style="color: var(--text-muted);">SHA-256 Integrity</td>
+                        <td id="metric-sha256" class="mono" style="word-break: break-all; font-size: 11px;">—</td>
+                    </tr>
+                    <tr>
+                        <td style="color: var(--text-muted);">Destination Path</td>
+                        <td id="metric-savepath" class="mono" style="word-break: break-all; font-size: 11px;">—</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="form-label">Live Socket Output</div>
+            <pre class="console-box" id="transfer-log" style="max-height: 170px;">Ready. Select a file and transport protocol to begin streaming.</pre>
         </div>
     </div>
 </div>
 {% endblock %}
+
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/files.js') }}"></script>
 {% endblock %}

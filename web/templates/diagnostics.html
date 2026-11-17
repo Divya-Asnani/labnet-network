@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Network Diagnostics{% endblock %}
+{% block page_title %}Network Diagnostics &amp; Mail Services{% endblock %}
+{% block page_subtitle %}Real Linux kernel network tools (ICMP, routing, sockets), DNS resolver, and local SMTP/POP3 demonstrations{% endblock %}
+
+{% block content %}
+<!-- Row 1: ICMP & Kernel Diagnostics + DNS Lookup -->
+<div class="grid-main-side">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-terminal"></i> ICMP, Routing &amp; Socket Diagnostics</div>
+            <span id="diag-meta" class="mono" style="color: var(--text-muted);">Ready</span>
+        </div>
+        <div class="card-body">
+            <div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 14px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label class="form-label" for="diag-target">Target Host / IPv4 Address</label>
+                    <input type="text" id="diag-target" class="form-input mono" value="{{ server_ip }}">
+                </div>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="execDiag('ping')"><i class="fa-solid fa-satellite-dish"></i> Ping</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('traceroute')"><i class="fa-solid fa-route"></i> Traceroute</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('routes')"><i class="fa-solid fa-signs-post"></i> Routing Table</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('interfaces')"><i class="fa-solid fa-ethernet"></i> Interfaces</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('sockets')"><i class="fa-solid fa-plug"></i> Listening Sockets</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('tcp_connections')">TCP Sessions</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="execDiag('udp_status')">UDP Sockets</button>
+            </div>
+
+            <pre class="console-box" id="diag-console">Select any diagnostic tool above to execute safely via subprocess argument lists.</pre>
+        </div>
+    </div>
+
+    <!-- DNS Resolution Client -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-globe"></i> DNS Resolution Client</div>
+            <span class="badge badge-udp">UDP :53</span>
+        </div>
+        <div class="card-body">
+            <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 12px;">
+                Genuine DNS client demonstration querying the host resolver configured in <span class="mono">/etc/resolv.conf</span> (not a full DNS server).
+            </p>
+            <div class="form-group">
+                <label class="form-label" for="dns-domain">Domain or Hostname</label>
+                <input type="text" id="dns-domain" class="form-input mono" value="localhost" placeholder="e.g. localhost, google.com">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="dns-rtype">Query Record Type</label>
+                <select id="dns-rtype" class="form-select">
+                    <option value="A">A — IPv4 Address</option>
+                    <option value="AAAA">AAAA — IPv6 Address</option>
+                    <option value="PTR">PTR — Reverse Pointer (enter IP)</option>
+                </select>
+            </div>
+            <button type="button" class="btn btn-primary btn-block" onclick="execDnsLookup()" style="margin-bottom: 14px;">
+                <i class="fa-solid fa-magnifying-glass"></i> Run Live DNS Lookup
+            </button>
+            <pre class="console-box" id="dns-console" style="max-height: 185px;">Query results, upstream nameserver, and resolution latency will appear here.</pre>
+        </div>
+    </div>
+</div>
+
+<!-- Row 2: Dedicated Local SMTP (:1025) & POP3 (:1100) Mail Demonstration -->
+<div class="alert alert-warning" style="margin-bottom: 16px;">
+    <i class="fa-solid fa-circle-info" style="margin-top: 2px;"></i>
+    <div>
+        <strong>Local Mail Test Services (Educational Demonstration):</strong> LabNet runs an internal RFC 5321 <strong>SMTP</strong> test server on port <span class="mono">1025</span> (for sending messages into a local spool) and an RFC 1939 <strong>POP3</strong> test server on port <span class="mono">1100</span> (for retrieving messages from that spool). These services demonstrate genuine mail protocols locally and do <strong>not</strong> transmit external Internet emails.
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- SMTP Submission Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-regular fa-paper-plane"></i> SMTP Submission (Send Mail)</div>
+            <span class="badge badge-tcp">TCP :1025</span>
+        </div>
+        <div class="card-body">
+            <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 12px;">
+                <strong>SMTP</strong> pushes outgoing mail via <span class="mono">EHLO → MAIL FROM → RCPT TO → DATA → QUIT</span>.
+            </p>
+            <div class="form-group">
+                <label class="form-label" for="smtp-sender">Sender Address</label>
+                <input type="email" id="smtp-sender" class="form-input mono" value="{{ current_user.email if current_user else 'researcher@labnet.local' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="smtp-recipient">Recipient Local Mailbox</label>
+                <input type="email" id="smtp-recipient" class="form-input mono" value="student@labnet.local">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="smtp-subject">Subject</label>
+                <input type="text" id="smtp-subject" class="form-input" value="LabNet Experiment Status Notification">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="smtp-body">Message Body</label>
+                <textarea id="smtp-body" class="form-textarea" rows="3">Packet capture and reliable UDP ARQ benchmark completed on VM2.</textarea>
+            </div>
+            <button type="button" id="btn-smtp-send" class="btn btn-primary btn-block" onclick="execSmtpSend()" style="margin-bottom: 14px;">
+                <i class="fa-solid fa-paper-plane"></i> Send Test Email to Local Spool (:1025)
+            </button>
+            <div class="form-label">RFC 5321 SMTP Command / Response Console</div>
+            <pre class="console-box" id="smtp-console" style="max-height: 180px;">Waiting for SMTP submission...</pre>
+        </div>
+    </div>
+
+    <!-- POP3 Retrieval Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-inbox"></i> POP3 Mailbox Retrieval</div>
+            <span class="badge badge-tcp">TCP :1100</span>
+        </div>
+        <div class="card-body">
+            <p style="font-size: 12.5px; color: var(--text-secondary); margin: 0 0 12px;">
+                <strong>POP3</strong> pulls messages from a server mailbox via <span class="mono">USER → PASS → STAT → LIST → RETR → QUIT</span>.
+            </p>
+            <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 14px;">
+                <div style="flex: 1;">
+                    <label class="form-label" for="pop3-user">Mailbox Username</label>
+                    <input type="text" id="pop3-user" class="form-input mono" value="student" placeholder="student">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="execPop3Fetch()">
+                    <i class="fa-solid fa-rotate"></i> Refresh Mailbox
+                </button>
+            </div>
+
+            <div class="form-label">Messages in Local Mailbox</div>
+            <div id="pop3-message-list" style="border: 1px solid var(--border); border-radius: 8px; max-height: 165px; overflow-y: auto; margin-bottom: 12px; background: var(--surface-subtle);">
+                <div style="padding: 14px; text-align: center; color: var(--text-muted); font-size: 12.5px;">Click "Refresh Mailbox" to connect via POP3 (:1100).</div>
+            </div>
+
+            <div class="form-label">Selected Message &amp; RFC 1939 POP3 Transcript</div>
+            <pre class="console-box" id="pop3-console" style="max-height: 200px;">Waiting for POP3 session...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let pop3Messages = [];
+
+function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function execDiag(cmd) {
+    const target = (document.getElementById("diag-target").value || "").trim();
+    const out = document.getElementById("diag-console");
+    const meta = document.getElementById("diag-meta");
+    out.textContent = `$ Executing ${cmd} ${target}...\n`;
+    meta.textContent = "Running...";
+
+    try {
+        const resp = await fetch(`/api/diagnostics/${encodeURIComponent(cmd)}?target=${encodeURIComponent(target)}`);
+        const d = await resp.json();
+        meta.textContent = `Exit ${d.exit_code ?? "?"} • ${d.duration_ms ?? 0} ms`;
+        out.textContent = `$ ${d.command || cmd}\n${"─".repeat(52)}\n${d.output || d.error || "(no output)"}`;
+    } catch (err) {
+        meta.textContent = "Error";
+        out.textContent = "Request failed: " + err.message;
+    }
+}
+
+async function execDnsLookup() {
+    const domain = (document.getElementById("dns-domain").value || "localhost").trim();
+    const record_type = document.getElementById("dns-rtype").value;
+    const out = document.getElementById("dns-console");
+    out.textContent = `Querying DNS for ${domain} (${record_type})...`;
+
+    try {
+        const resp = await fetch("/api/dns/lookup", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({domain, record_type})
+        });
+        const d = await resp.json();
+        out.textContent = [
+            `Status:       ${d.status}`,
+            `Domain:       ${d.domain}`,
+            `Record Type:  ${d.record_type}`,
+            `DNS Server:   ${d.nameserver}`,
+            `Duration:     ${d.duration_ms} ms`,
+            `Resolved IPs: ${(d.resolved_addresses || []).join(", ") || "None"}`,
+            d.error ? `Error:        ${d.error}` : ""
+        ].filter(Boolean).join("\n");
+    } catch (err) {
+        out.textContent = "DNS lookup request failed: " + err.message;
+    }
+}
+
+async function execSmtpSend() {
+    const btn = document.getElementById("btn-smtp-send");
+    const out = document.getElementById("smtp-console");
+    const payload = {
+        sender: document.getElementById("smtp-sender").value.trim(),
+        recipient: document.getElementById("smtp-recipient").value.trim(),
+        subject: document.getElementById("smtp-subject").value.trim(),
+        body: document.getElementById("smtp-body").value.trim()
+    };
+    btn.disabled = true;
+    out.textContent = "Connecting to local SMTP test server on port 1025...";
+
+    try {
+        const resp = await fetch("/api/mail/send", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+        const d = await resp.json();
+        const lines = [
+            `Status:   ${d.status || "ERROR"} (${d.duration_ms || 0} ms)`,
+            `Server:   ${d.smtp_host || "127.0.0.1:1025"}`,
+            d.note ? `Note:     ${d.note}` : "",
+            "─".repeat(48),
+            ...(d.transcript || [d.error || ""])
+        ].filter(Boolean);
+        out.textContent = lines.join("\n");
+        if (resp.ok) {
+            // Auto-refresh matching mailbox username
+            const rcptUser = payload.recipient.split("@")[0];
+            if (rcptUser) {
+                document.getElementById("pop3-user").value = rcptUser;
+                execPop3Fetch();
+            }
+        }
+    } catch (err) {
+        out.textContent = "SMTP error: " + err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function execPop3Fetch() {
+    const user = (document.getElementById("pop3-user").value || "student").trim();
+    const listBox = document.getElementById("pop3-message-list");
+    const out = document.getElementById("pop3-console");
+    out.textContent = `Connecting to local POP3 server (:1100) for mailbox '${user}'...`;
+
+    try {
+        const resp = await fetch(`/api/mail/inbox?user=${encodeURIComponent(user)}`);
+        const d = await resp.json();
+        pop3Messages = d.messages || [];
+
+        if (!resp.ok) {
+            listBox.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12.5px;">${esc(d.error || "POP3 retrieval failed")}</div>`;
+            out.textContent = (d.transcript || [d.error]).join("\n");
+            return;
+        }
+
+        if (!pop3Messages.length) {
+            listBox.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-muted); font-size:12.5px;">Mailbox '${esc(user)}' is empty. Send a test email via SMTP first.</div>`;
+        } else {
+            listBox.innerHTML = pop3Messages.map(m => `
+                <div onclick="viewPop3Message(${m.index})" style="padding:9px 12px; border-bottom:1px solid var(--border); cursor:pointer; background:var(--surface); display:flex; justify-content:space-between; align-items:center;">
+                    <div style="min-width:0;">
+                        <div style="font-weight:600; font-size:12.5px;">#${m.index} — ${esc(m.subject)}</div>
+                        <div style="font-size:11.5px; color:var(--text-muted);">From: ${esc(m.from)}</div>
+                    </div>
+                    <span class="mono" style="color:var(--text-muted); font-size:11px;">${m.size_bytes} B</span>
+                </div>
+            `).join("");
+        }
+
+        out.textContent = [
+            `Status:   ${d.status} • ${d.message_count} message(s) • ${d.total_octets} octets (${d.duration_ms} ms)`,
+            "─".repeat(48),
+            ...(d.transcript || [])
+        ].join("\n");
+    } catch (err) {
+        out.textContent = "POP3 error: " + err.message;
+    }
+}
+
+function viewPop3Message(index) {
+    const m = pop3Messages.find(x => x.index === index);
+    if (!m) return;
+    const out = document.getElementById("pop3-console");
+    out.textContent = `=== POP3 RETR ${m.index} (${m.size_bytes} octets) ===\n\n${m.content}`;
+}
+</script>
+{% endblock %}

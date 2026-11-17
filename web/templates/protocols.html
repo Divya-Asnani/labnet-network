@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Protocol Demonstrations{% endblock %}
+{% block page_title %}Multi-Protocol Demonstrations{% endblock %}
+{% block page_subtitle %}Interactive technical reference &amp; live protocol verification across LabNet{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- 1. TCP Broadcast Chat -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-regular fa-comments"></i> TCP Broadcast Chat</div>
+            <span class="badge badge-tcp">TCP :5001</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> Reliable, ordered, connection-oriented real-time messaging across lab workstations.</p>
+            <p style="margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;"><strong>How it works:</strong> Uses <span class="mono">AF_INET / SOCK_STREAM</span> with one worker thread per client and newline-delimited JSON framing to maintain message boundaries over a continuous TCP byte stream. Supabase stores message history separately for offline retrieval.</p>
+            <p style="margin: 0 0 12px; font-size: 12.5px;"><strong>Implementation:</strong> <span class="mono">server/tcp_chat_server.py</span> &amp; <span class="mono">clients/tcp_chat_client.py</span></p>
+            <a href="/chat" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-right"></i> Open Live Chat</a>
+        </div>
+    </div>
+
+    <!-- 2. TCP File Transfer -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-file-arrow-up"></i> Chunked TCP File Transfer</div>
+            <span class="badge badge-tcp">TCP :2121</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> High-throughput, reliable binary file upload with cryptographic integrity checks.</p>
+            <p style="margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;"><strong>How it works:</strong> Exchanges a JSON metadata handshake (<span class="mono">filename, filesize, sha256</span>), waits for <span class="mono">READY</span> ACK, streams 64 KB binary chunks, computes SHA-256 in flight, and writes to <span class="mono">uploads/</span>.</p>
+            <p style="margin: 0 0 12px; font-size: 12.5px;"><strong>Implementation:</strong> <span class="mono">server/tcp_file_server.py</span> &amp; <span class="mono">clients/tcp_file_client.py</span></p>
+            <a href="/files" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-right"></i> Run TCP Upload</a>
+        </div>
+    </div>
+
+    <!-- 3. Reliable UDP File Transfer (ARQ) -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-bolt"></i> Reliable UDP (Sliding-Window ARQ)</div>
+            <span class="badge badge-udp">UDP :2122</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> Demonstrates building reliability, sequencing, and loss recovery atop connectionless UDP datagrams.</p>
+            <p style="margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;"><strong>How it works:</strong> Splits files into 1024-byte sequenced datagrams, transmits up to <span class="mono">WINDOW_SIZE=5</span> in-flight chunks, handles selective ACKs, detects duplicates/out-of-order arrivals, retransmits on timeout, and verifies SHA-256 after reassembly.</p>
+            <p style="margin: 0 0 12px; font-size: 12.5px;"><strong>Test CLI:</strong> <span class="mono">python clients/udp_file_client.py file.bin --server {{ server_ip }} --loss-rate 0.20</span></p>
+            <a href="/files" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-right"></i> Run UDP Transfer</a>
+        </div>
+    </div>
+
+    <!-- 4. Direct Peer-to-Peer Transfer -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-share-nodes"></i> Direct Peer-to-Peer Transfer</div>
+            <span class="badge badge-p2p">TCP :2123</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> Workstation-to-workstation file transfer without relaying file contents through VM1.</p>
+            <p style="margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;"><strong>How it works:</strong> Receiving peer registers its reachable IP &amp; port via <span class="mono">/api/peers/register</span>. Sender connects directly to the peer's socket; VM1 coordinates discovery &amp; metadata only.</p>
+            <p style="margin: 0 0 12px; font-size: 12.5px;"><strong>Test CLI:</strong> <span class="mono">python clients/p2p_node.py --listen --port 2123</span></p>
+            <a href="/files" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-right"></i> Open P2P Transfer</a>
+        </div>
+    </div>
+
+    <!-- 5. UDP Heartbeat Monitoring -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-heart-pulse"></i> UDP Heartbeat &amp; Presence</div>
+            <span class="badge badge-udp">UDP :6000</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> Low-overhead liveness monitoring and automatic offline timeout detection.</p>
+            <p style="margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;"><strong>How it works:</strong> Clients emit periodic <span class="mono">HEARTBEAT|id|ts</span> datagrams and receive <span class="mono">HEARTBEAT_ACK</span>. Missing heartbeats past <span class="mono">HEARTBEAT_TIMEOUT</span> mark the device offline in Supabase.</p>
+            <p style="margin: 0 0 12px; font-size: 12.5px;"><strong>Test CLI:</strong> <span class="mono">python clients/heartbeat_client.py --server {{ server_ip }} --simulate-missed 4</span></p>
+            <a href="/monitoring" class="btn btn-primary btn-sm"><i class="fa-solid fa-arrow-right"></i> View Monitoring</a>
+        </div>
+    </div>
+
+    <!-- 6. HTTP REST & WebSocket -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-code"></i> HTTP/1.1 GET &amp; POST</div>
+            <span class="badge badge-primary">TCP :5050</span>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 8px;"><strong>Purpose:</strong> Application-layer request/response APIs, authenticated sessions, and status codes.</p>
+            <p style="margin: 0 0 10px; color: var(--text-secondary); font-size: 13px;"><strong>Live Test:</strong> Execute a genuine HTTP GET or POST request against <span class="mono">/api/http/inspect</span> and inspect the response metadata below.</p>
+            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="testHttpProto('GET')">Run HTTP GET</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="testHttpProto('POST')">Run HTTP POST</button>
+            </div>
+            <pre class="console-box" id="http-proto-out" style="max-height: 115px;">Click GET or POST to inspect live HTTP metadata.</pre>
+        </div>
+    </div>
+
+    <!-- 7. DNS, SMTP, POP3 & ICMP -->
+    <div class="card" style="grid-column: 1 / -1;">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-toolbox"></i> DNS (:53), Local SMTP (:1025), Local POP3 (:1100) &amp; ICMP</div>
+            <a href="/diagnostics" class="btn btn-primary btn-sm">Launch Interactive Console</a>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Protocol</th>
+                            <th>Port</th>
+                            <th>Role in LabNet</th>
+                            <th>Implementation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>DNS (Client)</strong></td>
+                            <td class="mono">UDP 53</td>
+                            <td>Resolves A, AAAA, and PTR records using host resolver &amp; measures latency</td>
+                            <td class="mono">server/dns_service.py</td>
+                        </tr>
+                        <tr>
+                            <td><strong>SMTP (Local Spool)</strong></td>
+                            <td class="mono">TCP 1025</td>
+                            <td>RFC 5321 mail submission handshake queuing alerts into local test mailbox</td>
+                            <td class="mono">server/smtp_service.py + mail_test_server.py</td>
+                        </tr>
+                        <tr>
+                            <td><strong>POP3 (Local Mailbox)</strong></td>
+                            <td class="mono">TCP 1100</td>
+                            <td>RFC 1939 client authentication, STAT/LIST inspection, and RETR retrieval</td>
+                            <td class="mono">server/pop3_service.py + mail_test_server.py</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ICMP &amp; Kernel</strong></td>
+                            <td class="mono">Layer 3</td>
+                            <td>Safe execution of ping, traceroute, ip route, ip addr, and ss -tuln</td>
+                            <td class="mono">web/services/monitoring_service.py</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function testHttpProto(method) {
+    const out = document.getElementById("http-proto-out");
+    out.textContent = `Sending HTTP ${method} /api/http/inspect...`;
+    try {
+        const opts = { method };
+        if (method === "POST") {
+            opts.headers = {"Content-Type": "application/json"};
+            opts.body = JSON.stringify({demo: "LabNet HTTP POST validation", timestamp: new Date().toISOString()});
+        }
+        const resp = await fetch("/api/http/inspect", opts);
+        const data = await resp.json();
+        out.textContent = `HTTP/1.1 ${resp.status} ${resp.statusText}\n` + JSON.stringify(data, null, 2);
+    } catch (e) {
+        out.textContent = "Error: " + e.message;
+    }
+}
+</script>
+{% endblock %}

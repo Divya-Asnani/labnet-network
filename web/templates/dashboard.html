@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}{% if current_user and current_user.role == 'admin' %}Administrator Overview{% else %}Network Overview{% endif %}{% endblock %}
+{% block page_subtitle %}Live metrics from Supabase PostgreSQL &amp; active LabNet socket services{% endblock %}
+
+{% block topbar_actions %}
+<button type="button" class="btn btn-secondary btn-sm" onclick="loadDashboard()">
+    <i class="fa-solid fa-rotate"></i> Refresh
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- KPI Summary Cards (Real Data Only) -->
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="kpi-top">
+            <span>Registered Devices</span>
+            <span class="kpi-icon"><i class="fa-solid fa-desktop"></i></span>
+        </div>
+        <div class="kpi-value" id="kpi-total-devices">—</div>
+        <div class="kpi-sub">
+            <span style="color: var(--success); font-weight: 600;" id="kpi-online-devices">0 online</span> •
+            <span style="color: var(--text-muted);" id="kpi-offline-devices">0 offline</span>
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-top">
+            <span>Chat Messages</span>
+            <span class="kpi-icon"><i class="fa-regular fa-comments"></i></span>
+        </div>
+        <div class="kpi-value" id="kpi-total-messages">—</div>
+        <div class="kpi-sub">Persisted in <span class="mono">chat_messages</span></div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-top">
+            <span>File Transfers</span>
+            <span class="kpi-icon"><i class="fa-solid fa-file-arrow-up"></i></span>
+        </div>
+        <div class="kpi-value" id="kpi-total-transfers">—</div>
+        <div class="kpi-sub">
+            <span style="color: var(--success); font-weight: 600;" id="kpi-ok-transfers">0 completed</span> •
+            <span style="color: var(--danger);" id="kpi-fail-transfers">0 failed</span>
+        </div>
+    </div>
+
+    <div class="kpi-card">
+        <div class="kpi-top">
+            <span>Active Sessions</span>
+            <span class="kpi-icon"><i class="fa-solid fa-plug"></i></span>
+        </div>
+        <div class="kpi-value" id="kpi-active-sessions">—</div>
+        <div class="kpi-sub">
+            <span id="kpi-peers-count">0</span> P2P peers registered
+        </div>
+    </div>
+</div>
+
+<!-- Row 2: Active Socket Services + Protocol Activity -->
+<div class="grid-main-side">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-server"></i> Core Socket Services</div>
+            <span class="mono" style="color: var(--text-muted);">Passive kernel inspection</span>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Service</th>
+                            <th>Protocol</th>
+                            <th>Port</th>
+                            <th>State</th>
+                        </tr>
+                    </thead>
+                    <tbody id="services-tbody">
+                        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading service states...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-chart-bar"></i> Protocol Activity</div>
+            <span style="font-size: 12px; color: var(--text-muted);">Recorded events</span>
+        </div>
+        <div class="card-body" id="protocol-bars">
+            <div style="color: var(--text-muted); font-size: 13px;">Loading protocol breakdown...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Row 3: Recent Devices + Recent Transfers -->
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-laptop-code"></i> Registered Devices</div>
+            <a href="/monitoring" class="btn btn-secondary btn-sm">View All</a>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Device</th>
+                            <th>IP Address</th>
+                            <th>Status</th>
+                            <th>Last Heartbeat</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dash-devices-tbody">
+                        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading devices...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Recent File Transfers</div>
+            <a href="/repository" class="btn btn-secondary btn-sm">Repository</a>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Protocol</th>
+                            <th>Size</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dash-transfers-tbody">
+                        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading transfers...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Row 4: Recent Network Events -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title"><i class="fa-solid fa-bolt"></i> Recent Network Events</div>
+        {% if current_user and current_user.role == 'admin' %}
+        <a href="/activity" class="btn btn-secondary btn-sm">Full Audit Log</a>
+        {% endif %}
+    </div>
+    <div class="card-body no-pad">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Event</th>
+                        <th>Protocol</th>
+                        <th>Source IP</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="dash-events-tbody">
+                    <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading network events...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function fmtBytes(b) {
+    if (!b) return "0 B";
+    const u = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(b) / Math.log(1024));
+    return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + u[i];
+}
+
+function fmtTime(iso) {
+    if (!iso || iso === "-") return "—";
+    return String(iso).replace("T", " ").slice(0, 19);
+}
+
+async function loadDashboard() {
+    try {
+        const resp = await fetch("/api/dashboard/overview");
+        if (!resp.ok) return;
+        const d = await resp.json();
+        const c = d.counts || {};
+
+        document.getElementById("kpi-total-devices").textContent = c.total_devices ?? 0;
+        document.getElementById("kpi-online-devices").textContent = `${c.online_devices ?? 0} online`;
+        document.getElementById("kpi-offline-devices").textContent = `${c.offline_devices ?? 0} offline`;
+        document.getElementById("kpi-total-messages").textContent = c.total_messages ?? 0;
+        document.getElementById("kpi-total-transfers").textContent = c.total_transfers ?? 0;
+        document.getElementById("kpi-ok-transfers").textContent = `${c.successful_transfers ?? 0} completed`;
+        document.getElementById("kpi-fail-transfers").textContent = `${c.failed_transfers ?? 0} failed`;
+        document.getElementById("kpi-active-sessions").textContent = c.active_sessions ?? 0;
+        document.getElementById("kpi-peers-count").textContent = c.registered_peers ?? 0;
+
+        // Services table
+        const svcs = d.services || {};
+        const svcRows = [
+            {name: "TCP Broadcast Chat", proto: "TCP", port: 5001, up: svcs.tcp_chat_5001},
+            {name: "TCP File Server", proto: "TCP", port: 2121, up: svcs.tcp_file_2121},
+            {name: "Reliable UDP File Server", proto: "UDP", port: 2122, up: svcs.udp_file_2122},
+            {name: "UDP Heartbeat Server", proto: "UDP", port: 6000, up: svcs.udp_heartbeat_6000},
+            {name: "Local SMTP Test Spool", proto: "TCP", port: 1025, up: svcs.smtp_1025},
+            {name: "Local POP3 Test Mailbox", proto: "TCP", port: 1100, up: svcs.pop3_1100}
+        ];
+        document.getElementById("services-tbody").innerHTML = svcRows.map(s => `
+            <tr>
+                <td style="font-weight: 500;">${s.name}</td>
+                <td><span class="badge ${s.proto === 'TCP' ? 'badge-tcp' : 'badge-udp'}">${s.proto}</span></td>
+                <td class="mono">${s.port}</td>
+                <td><span class="badge ${s.up ? 'badge-online' : 'badge-offline'}"><span class="status-dot ${s.up ? 'online' : 'offline'}"></span>${s.up ? 'LISTENING' : 'STOPPED'}</span></td>
+            </tr>
+        `).join("");
+
+        // Protocol activity bars
+        const pa = d.protocol_activity || {};
+        const maxVal = Math.max(1, ...Object.values(pa));
+        document.getElementById("protocol-bars").innerHTML = Object.entries(pa).map(([proto, val]) => {
+            const pct = Math.round((val / maxVal) * 100);
+            return `
+            <div style="margin-bottom: 11px;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                    <span style="font-weight:600; color:var(--text-primary);">${proto}</span>
+                    <span class="mono" style="color:var(--text-muted);">${val}</span>
+                </div>
+                <div class="progress-track" style="height:7px;">
+                    <div class="progress-fill" style="width:${pct}%;"></div>
+                </div>
+            </div>`;
+        }).join("");
+
+        // Devices table
+        const devs = d.recent_devices || [];
+        document.getElementById("dash-devices-tbody").innerHTML = devs.length
+            ? devs.map(dev => `
+                <tr>
+                    <td style="font-weight:600;">${esc(dev.device_name)}</td>
+                    <td class="mono">${esc(dev.ip)}</td>
+                    <td><span class="badge ${dev.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}">${esc(dev.status)}</span></td>
+                    <td class="mono" style="color:var(--text-muted);">${fmtTime(dev.last_seen)}</td>
+                </tr>`).join("")
+            : `<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">No devices registered yet. Start <span class="mono">clients/heartbeat_client.py</span> on VM2 to register.</td></tr>`;
+
+        // Transfers table
+        const trs = d.recent_transfers || [];
+        document.getElementById("dash-transfers-tbody").innerHTML = trs.length
+            ? trs.map(t => `
+                <tr>
+                    <td style="font-weight:500;">${esc(t.file_name)}</td>
+                    <td><span class="badge ${t.protocol === 'UDP' ? 'badge-udp' : 'badge-tcp'}">${esc(t.protocol)}</span></td>
+                    <td class="mono">${fmtBytes(t.file_size)}</td>
+                    <td><span class="badge ${t.status === 'completed' ? 'badge-success' : (t.status === 'failed' ? 'badge-danger' : 'badge-warning')}">${esc(t.status)}</span></td>
+                </tr>`).join("")
+            : `<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">No file transfers recorded yet.</td></tr>`;
+
+        // Events table
+        const evs = d.recent_events || [];
+        document.getElementById("dash-events-tbody").innerHTML = evs.length
+            ? evs.map(e => `
+                <tr>
+                    <td class="mono" style="color:var(--text-muted);">${fmtTime(e.timestamp)}</td>
+                    <td><span class="badge badge-neutral">${esc(e.event_type)}</span></td>
+                    <td><span class="badge badge-primary">${esc(e.protocol)}</span></td>
+                    <td class="mono">${esc(e.source_ip)}</td>
+                    <td style="color:var(--text-secondary);">${esc(e.detail)}</td>
+                </tr>`).join("")
+            : `<tr><td colspan="5" style="text-align:center; padding:18px; color:var(--text-muted);">No network events recorded yet.</td></tr>`;
+    } catch (err) {
+        console.error("Dashboard load error:", err);
+    }
+}
+
+loadDashboard();
+setInterval(loadDashboard, 6000);
+</script>
+{% endblock %}

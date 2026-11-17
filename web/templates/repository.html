@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}File Repository{% endblock %}
+{% block page_title %}Server File Repository{% endblock %}
+{% block page_subtitle %}Authenticated file listing &amp; secure SHA-256 verified retrieval from server uploads/{% endblock %}
+
+{% block topbar_actions %}
+<a href="/files" class="btn btn-primary btn-sm">
+    <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload New File
+</a>
+<button type="button" class="btn btn-secondary btn-sm" onclick="loadRepository()">
+    <i class="fa-solid fa-rotate"></i> Refresh
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header" style="flex-wrap: wrap;">
+        <div class="card-title"><i class="fa-regular fa-folder-open"></i> Stored Research Resources</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="repo-search" class="form-input" style="width: 240px; padding: 6px 10px;" placeholder="Search filename, sender, SHA-256..." oninput="renderRepository()">
+        </div>
+    </div>
+    <div class="card-body no-pad">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Filename</th>
+                        <th>Size</th>
+                        <th>Upload Date</th>
+                        <th>Sender</th>
+                        <th>Protocol</th>
+                        <th>SHA-256 Checksum</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="repo-tbody">
+                    <tr><td colspan="8" style="text-align: center; padding: 24px; color: var(--text-muted);">Loading stored files...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let repoFiles = [];
+
+function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function fmtBytes(b) {
+    if (!b) return "0 B";
+    const u = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(b) / Math.log(1024));
+    return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + u[i];
+}
+
+function copyChecksum(hash, btn) {
+    navigator.clipboard.writeText(hash).then(() => {
+        const prev = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-check" style="color:var(--success);"></i>';
+        setTimeout(() => { btn.innerHTML = prev; }, 1200);
+    });
+}
+
+function renderRepository() {
+    const q = (document.getElementById("repo-search").value || "").toLowerCase();
+    const tbody = document.getElementById("repo-tbody");
+    const rows = repoFiles.filter(f => {
+        if (!q) return true;
+        return [f.filename, f.sender, f.protocol, f.sha256].some(v => String(v || "").toLowerCase().includes(q));
+    });
+
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:26px; color:var(--text-muted);">No files stored in the server repository yet. Upload a file via TCP or UDP from the <a href="/files">File Transfer</a> page.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = rows.map(f => {
+        const dlTarget = f.transfer_id || f.filename;
+        const shortSha = f.sha256 ? f.sha256.slice(0, 14) + "…" : "—";
+        return `
+        <tr>
+            <td style="font-weight: 600;">
+                <i class="fa-regular fa-file-lines" style="color: var(--accent); margin-right: 7px;"></i>${esc(f.filename)}
+            </td>
+            <td class="mono">${fmtBytes(f.size)}</td>
+            <td class="mono" style="color: var(--text-muted);">${esc(f.uploaded_at)}</td>
+            <td>${esc(f.sender)}</td>
+            <td><span class="badge ${f.protocol === 'UDP' ? 'badge-udp' : 'badge-tcp'}">${esc(f.protocol)}</span></td>
+            <td class="mono" style="color: var(--text-secondary);">
+                <span title="${esc(f.sha256)}">${esc(shortSha)}</span>
+                ${f.sha256 ? `<button type="button" class="btn btn-secondary btn-sm" style="padding:2px 6px; margin-left:4px;" onclick="copyChecksum('${esc(f.sha256)}', this)" title="Copy full SHA-256"><i class="fa-regular fa-copy"></i></button>` : ''}
+            </td>
+            <td><span class="badge ${f.status === 'completed' ? 'badge-success' : 'badge-warning'}">${esc(f.status)}</span></td>
+            <td>
+                <a href="/api/files/download/${encodeURIComponent(dlTarget)}" class="btn btn-primary btn-sm" download>
+                    <i class="fa-solid fa-download"></i> Download
+                </a>
+            </td>
+        </tr>`;
+    }).join("");
+}
+
+async function loadRepository() {
+    try {
+        const resp = await fetch("/api/files/list");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        repoFiles = data.files || [];
+        renderRepository();
+    } catch (err) {
+        document.getElementById("repo-tbody").innerHTML = `<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--danger);">Failed to load files: ${esc(err.message)}</td></tr>`;
+    }
+}
+
+loadRepository();
+</script>
+{% endblock %}

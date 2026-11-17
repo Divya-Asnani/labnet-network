@@ -3,45 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LabNet Network Portal</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <!-- FontAwesome -->
+    <title>{% block title %}LabNet{% endblock %} — Research Network Portal</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <header class="top-nav">
-        <div class="nav-brand">
-            <i class="fa-solid fa-network-wired"></i>
-            LabNet Network Portal
+<div class="app-shell">
+    <!-- Shared Left Navigation Sidebar -->
+    <aside class="sidebar" id="app-sidebar">
+        <div class="sidebar-brand">
+            <a href="/" aria-label="LabNet Dashboard">
+                <img src="{{ url_for('static', filename='img/labnet-logo.svg') }}" alt="LabNet Logo">
+            </a>
         </div>
-        <nav class="nav-links">
-            <a href="/" class="{% if request.path == '/' %}active{% endif %}">Topology</a>
-            <a href="/chat" class="{% if request.path == '/chat' %}active{% endif %}">TCP Chat</a>
-            <a href="/files" class="{% if request.path == '/files' %}active{% endif %}">File Transfer</a>
-            <a href="/network" class="{% if request.path == '/network' %}active{% endif %}">Monitoring</a>
+
+        <nav class="sidebar-nav" aria-label="Primary Navigation">
+            <div class="nav-section-label">Workspace</div>
+            <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">
+                <i class="fa-solid fa-table-columns"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/monitoring" class="nav-item {% if request.path in ['/monitoring', '/network'] %}active{% endif %}">
+                <i class="fa-solid fa-wave-square"></i>
+                <span>Network Monitoring</span>
+            </a>
+            <a href="/chat" class="nav-item {% if request.path == '/chat' %}active{% endif %}">
+                <i class="fa-regular fa-comments"></i>
+                <span>Live Chat</span>
+            </a>
+
+            <div class="nav-section-label">Resource Sharing</div>
+            <a href="/files" class="nav-item {% if request.path == '/files' %}active{% endif %}">
+                <i class="fa-solid fa-arrow-up-from-bracket"></i>
+                <span>File Transfer</span>
+            </a>
+            <a href="/repository" class="nav-item {% if request.path == '/repository' %}active{% endif %}">
+                <i class="fa-regular fa-folder-open"></i>
+                <span>File Repository</span>
+            </a>
+
+            <div class="nav-section-label">Network Engineering</div>
+            <a href="/diagnostics" class="nav-item {% if request.path == '/diagnostics' %}active{% endif %}">
+                <i class="fa-solid fa-terminal"></i>
+                <span>Network Diagnostics</span>
+            </a>
+            <a href="/protocols" class="nav-item {% if request.path == '/protocols' %}active{% endif %}">
+                <i class="fa-solid fa-diagram-project"></i>
+                <span>Protocol Demos</span>
+            </a>
+
+            {% if current_user and current_user.role == 'admin' %}
+            <div class="nav-section-label">Administration</div>
+            <a href="/activity" class="nav-item {% if request.path == '/activity' %}active{% endif %}">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span>Activity Logs</span>
+            </a>
+            {% endif %}
         </nav>
-        <div class="nav-user" style="display: flex; align-items: center; gap: 12px; margin-left: auto;">
-            {% if session.get('user') %}
-                <span style="font-size: 0.85rem; color: #475569; font-weight: 500;">
-                    <i class="fa-solid fa-user-circle" style="color: #2563eb;"></i> {{ session['user']['display_name'] }} ({{ session['user']['role'] }})
-                </span>
-                <a href="/logout" style="font-size: 0.8rem; color: #dc2626; text-decoration: none; padding: 4px 8px; border: 1px solid #fecaca; border-radius: 4px; background: #fff5f5;">
-                    <i class="fa-solid fa-right-from-bracket"></i> Logout
-                </a>
+
+        <div class="sidebar-footer">
+            {% if current_user %}
+            <a href="/account" class="account-chip">
+                <div class="avatar-circle">{{ current_user.display_name[:2].upper() if current_user.display_name else 'LN' }}</div>
+                <div class="account-meta">
+                    <div class="account-name">{{ current_user.display_name }}</div>
+                    <div class="account-role">{{ current_user.role }} account</div>
+                </div>
+                <i class="fa-solid fa-gear" style="color: var(--text-muted); font-size: 13px;"></i>
+            </a>
+            <a href="/logout" class="logout-link">
+                <i class="fa-solid fa-right-from-bracket"></i>
+                <span>Sign Out</span>
+            </a>
             {% else %}
-                <a href="/login" style="font-size: 0.85rem; color: #2563eb; text-decoration: none; padding: 4px 10px; border: 1px solid #bfdbfe; border-radius: 4px; background: #eff6ff;">
-                    <i class="fa-solid fa-right-to-bracket"></i> Sign In
-                </a>
+            <a href="/login" class="btn btn-primary btn-block">Sign In</a>
             {% endif %}
         </div>
-    </header>
+    </aside>
 
-    <main class="main-container">
-        {% block content %}{% endblock %}
-    </main>
+    <!-- Main Content Viewport -->
+    <div class="app-main">
+        <header class="topbar">
+            <div class="topbar-left">
+                <button type="button" class="mobile-menu-btn" onclick="document.getElementById('app-sidebar').classList.toggle('open')" aria-label="Toggle Navigation">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <div>
+                    <h1 class="page-heading">{% block page_title %}LabNet{% endblock %}</h1>
+                    <div class="page-subtitle">{% block page_subtitle %}Multi-Protocol Research Network • {{ server_ip }}{% endblock %}</div>
+                </div>
+            </div>
+            <div class="topbar-right">
+                {% block topbar_actions %}{% endblock %}
+                <span class="server-pill" title="Central LabNet Server">
+                    <span class="status-dot online"></span>
+                    <span>{{ server_ip }}:{{ flask_port }}</span>
+                </span>
+            </div>
+        </header>
 
-    <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
-    {% block scripts %}{% endblock %}
+        <main class="page-content {% block content_class %}{% endblock %}">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+<script>
+    window.LABNET_USER = {{ (current_user or {}) | tojson }};
+    window.LABNET_SERVER_IP = {{ server_ip | tojson }};
+</script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Network Monitoring{% endblock %}
+{% block page_title %}Devices &amp; Network Monitoring{% endblock %}
+{% block page_subtitle %}Real-time UDP heartbeat presence, latency tracking, and active network sessions{% endblock %}
+
+{% block topbar_actions %}
+<button type="button" class="btn btn-secondary btn-sm" onclick="refreshMonitoring()">
+    <i class="fa-solid fa-rotate"></i> Refresh Now
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="alert alert-info" style="margin-bottom: 18px;">
+    <i class="fa-solid fa-circle-info" style="margin-top: 2px;"></i>
+    <div>
+        <strong>Online Device Definition:</strong> A workstation is marked <strong>ONLINE</strong> strictly while its independent UDP heartbeat client (<span class="mono">clients/heartbeat_client.py</span>) transmits datagrams to UDP port <span class="mono">6000</span>. If heartbeats stop for more than <strong id="lbl-timeout">10</strong> seconds, the server automatically marks the device <strong>OFFLINE</strong> and records a timeout event.
+    </div>
+</div>
+
+<!-- Registered Devices Card with Search & Status Filter -->
+<div class="card" style="margin-bottom: 20px;">
+    <div class="card-header" style="flex-wrap: wrap;">
+        <div class="card-title"><i class="fa-solid fa-desktop"></i> Registered Lab Devices</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="device-search" class="form-input" style="width: 210px; padding: 6px 10px;" placeholder="Search device, IP, user..." oninput="renderFilteredDevices()">
+            <select id="device-status-filter" class="form-select" style="width: 135px; padding: 6px 10px;" onchange="renderFilteredDevices()">
+                <option value="ALL">All Statuses</option>
+                <option value="ONLINE">Online Only</option>
+                <option value="OFFLINE">Offline Only</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body no-pad">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Device Name</th>
+                        <th>Hostname</th>
+                        <th>IP Address</th>
+                        <th>OS</th>
+                        <th>User</th>
+                        <th>Status</th>
+                        <th>Latency</th>
+                        <th>Last Heartbeat</th>
+                        <th>Registered</th>
+                    </tr>
+                </thead>
+                <tbody id="mon-devices-tbody">
+                    <tr><td colspan="9" style="text-align: center; padding: 20px; color: var(--text-muted);">Loading registered devices...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Heartbeat History & Active Sessions -->
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-heart-pulse"></i> Recent UDP Heartbeat Logs</div>
+            <span class="badge badge-udp">UDP :6000</span>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Received At</th>
+                            <th>Device</th>
+                            <th>Source IP</th>
+                            <th>Latency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mon-heartbeats-tbody">
+                        <tr><td colspan="4" style="text-align: center; padding: 18px; color: var(--text-muted);">Loading heartbeat logs...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-network-wired"></i> Network Sessions</div>
+            <span style="font-size: 12px; color: var(--text-muted);">From <span class="mono">network_sessions</span></span>
+        </div>
+        <div class="card-body no-pad">
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Protocol</th>
+                            <th>Dest Port</th>
+                            <th>Status</th>
+                            <th>Bytes</th>
+                            <th>Started</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mon-sessions-tbody">
+                        <tr><td colspan="5" style="text-align: center; padding: 18px; color: var(--text-muted);">Loading sessions...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allDevices = [];
+
+function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function fmtTime(iso) {
+    if (!iso || iso === "-") return "—";
+    return String(iso).replace("T", " ").slice(0, 19);
+}
+
+function renderFilteredDevices() {
+    const q = (document.getElementById("device-search").value || "").toLowerCase();
+    const st = document.getElementById("device-status-filter").value;
+    const tbody = document.getElementById("mon-devices-tbody");
+
+    const filtered = allDevices.filter(d => {
+        if (st !== "ALL" && d.status !== st) return false;
+        if (!q) return true;
+        return [d.device_name, d.hostname, d.ip, d.user_name, d.os].some(v => String(v || "").toLowerCase().includes(q));
+    });
+
+    if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:22px; color:var(--text-muted);">No matching devices found. Start <span class="mono">clients/heartbeat_client.py --server ${window.LABNET_SERVER_IP}</span> on VM2 to send live heartbeats.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(d => `
+        <tr>
+            <td style="font-weight: 600;">${esc(d.device_name)}</td>
+            <td class="mono" style="color: var(--text-secondary);">${esc(d.hostname)}</td>
+            <td class="mono">${esc(d.ip)}</td>
+            <td>${esc(d.os)}</td>
+            <td>${esc(d.user_name)} <span class="badge badge-${esc(d.user_role)}" style="font-size:10px;">${esc(d.user_role)}</span></td>
+            <td>
+                <span class="badge ${d.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}">
+                    <span class="status-dot ${d.status === 'ONLINE' ? 'online' : 'offline'}"></span>${esc(d.status)}
+                </span>
+            </td>
+            <td class="mono">${d.latency_ms !== null && d.latency_ms !== undefined ? d.latency_ms + ' ms' : '—'}</td>
+            <td class="mono" style="color: var(--text-muted);">${fmtTime(d.last_seen)}</td>
+            <td class="mono" style="color: var(--text-muted);">${fmtTime(d.created_at)}</td>
+        </tr>
+    `).join("");
+}
+
+async function refreshMonitoring() {
+    try {
+        const [devResp, hbResp, sessResp] = await Promise.all([
+            fetch("/api/monitoring/devices"),
+            fetch("/api/monitoring/heartbeats?limit=25"),
+            fetch("/api/monitoring/sessions?limit=25")
+        ]);
+
+        if (devResp.ok) {
+            const devData = await devResp.json();
+            allDevices = devData.devices || [];
+            if (devData.heartbeat_timeout) {
+                document.getElementById("lbl-timeout").textContent = devData.heartbeat_timeout;
+            }
+            renderFilteredDevices();
+        }
+
+        if (hbResp.ok) {
+            const hbData = await hbResp.json();
+            const hbs = hbData.heartbeats || [];
+            document.getElementById("mon-heartbeats-tbody").innerHTML = hbs.length
+                ? hbs.map(h => `
+                    <tr>
+                        <td class="mono" style="color: var(--text-muted);">${fmtTime(h.received_at)}</td>
+                        <td style="font-weight: 500;">${esc((h.devices || {}).device_name || h.device_id)}</td>
+                        <td class="mono">${esc(h.source_ip || (h.devices || {}).ip_address || '-')}</td>
+                        <td class="mono">${h.latency_ms !== null && h.latency_ms !== undefined ? h.latency_ms + ' ms' : '—'}</td>
+                    </tr>`).join("")
+                : `<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">No UDP heartbeat packets received yet.</td></tr>`;
+        }
+
+        if (sessResp.ok) {
+            const sessData = await sessResp.json();
+            const sess = sessData.sessions || [];
+            document.getElementById("mon-sessions-tbody").innerHTML = sess.length
+                ? sess.map(s => `
+                    <tr>
+                        <td><span class="badge badge-primary">${esc(s.protocol)}</span></td>
+                        <td class="mono">${esc(s.destination_port || '-')}</td>
+                        <td><span class="badge ${s.status === 'active' ? 'badge-online' : 'badge-neutral'}">${esc(s.status)}</span></td>
+                        <td class="mono">${(s.bytes_sent || 0)} B</td>
+                        <td class="mono" style="color: var(--text-muted);">${fmtTime(s.started_at)}</td>
+                    </tr>`).join("")
+                : `<tr><td colspan="5" style="text-align:center; padding:18px; color:var(--text-muted);">No sessions recorded yet.</td></tr>`;
+        }
+    } catch (err) {
+        console.error("Monitoring refresh error:", err);
+    }
+}
+
+refreshMonitoring();
+setInterval(refreshMonitoring, 4000);
+</script>
+{% endblock %}

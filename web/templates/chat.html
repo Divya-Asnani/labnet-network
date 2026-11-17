@@ -1,85 +1,84 @@
 {% extends "base.html" %}
+{% block title %}Live Chat{% endblock %}
+{% block page_title %}Live Research Chat{% endblock %}
+{% block page_subtitle %}Real-time TCP socket messaging (:5001) with Supabase persistent history{% endblock %}
+{% block content_class %}full-bleed{% endblock %}
+
+{% block topbar_actions %}
+<span id="tcp-bridge-pill" class="badge badge-neutral">
+    <span class="status-dot" id="tcp-bridge-dot"></span>
+    <span id="tcp-bridge-text">Checking TCP :5001...</span>
+</span>
+{% endblock %}
+
 {% block content %}
-<div class="chat-wrapper">
-    <!-- Network & Protocol Information Panel -->
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-between align-center">
-            <span><i class="fa-solid fa-comments"></i> Real-Time TCP Chat Portal</span>
-            <div id="conn-badge" class="badge badge-warning">
-                <i class="fa-solid fa-circle-notch fa-spin"></i> CONNECTING
+<div class="chat-workspace">
+    <!-- Panel 2: Conversations & Lab Participants -->
+    <section class="chat-sidebar-panel" aria-label="Conversations">
+        <div class="chat-sidebar-header">
+            <div class="chat-search-box">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" id="conv-search-input" placeholder="Search conversations..." oninput="filterConversations()">
+            </div>
+            <div class="chat-filter-tabs">
+                <button type="button" class="chat-filter-tab active" id="filter-all" onclick="setConvFilter('all')">All</button>
+                <button type="button" class="chat-filter-tab" id="filter-online" onclick="setConvFilter('online')">Online</button>
             </div>
         </div>
-        <div class="net-info-grid">
-            <div class="net-info-item">
-                <span class="label">Subnet:</span>
-                <span class="value">192.168.66.0/24</span>
-            </div>
-            <div class="net-info-item">
-                <span class="label">Server IP:</span>
-                <span class="value" id="disp-server-ip">192.168.66.128</span>
-            </div>
-            <div class="net-info-item">
-                <span class="label">Transport:</span>
-                <span class="value font-semibold text-blue">TCP (Port 5001)</span>
-            </div>
-            <div class="net-info-item">
-                <span class="label">Web Gateway:</span>
-                <span class="value">Flask + WebSocket (Port 8000)</span>
-            </div>
-            <div class="net-info-item">
-                <span class="label">Packets Sent:</span>
-                <span class="value" id="stats-sent">0</span>
-            </div>
-            <div class="net-info-item">
-                <span class="label">Packets Recv:</span>
-                <span class="value" id="stats-recv">0</span>
-            </div>
-        </div>
-    </div>
 
-    <!-- User / Device Identity Bar -->
-    <div class="card mb-4 bg-light">
-        <div class="d-flex align-center gap-3 flex-wrap">
-            <div class="d-flex align-center gap-2">
-                <label for="user-select" class="font-semibold text-sm">Active User:</label>
-                <select id="user-select" class="form-input form-select" onchange="changeUser()">
-                    <option value="Researcher" selected>Researcher (VM1)</option>
-                    <option value="Student">Student (VM2)</option>
-                    <option value="Faculty">Faculty Workstation</option>
-                    <option value="Custom">Custom User...</option>
-                </select>
-            </div>
-            <div id="custom-user-wrap" style="display: none;">
-                <input type="text" id="custom-user-input" class="form-input" placeholder="Enter username..." style="width: 150px;">
-            </div>
-            <div class="text-sm text-muted">
-                <strong>Device IP:</strong> <span id="disp-device-ip">192.168.66.128</span>
-            </div>
-            <div class="text-sm text-muted ml-auto">
-                <strong>Socket Route:</strong> Browser &rarr; WS &rarr; Flask &rarr; TCP:5001 &rarr; Broadcast
+        <div class="conv-list" id="conv-list">
+            <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                Loading conversations...
             </div>
         </div>
-    </div>
+    </section>
 
-    <!-- Main Chat Window -->
-    <div class="card chat-box-main">
-        <div class="chat-history-container" id="chat-messages">
-            <div class="system-message">
-                <i class="fa-solid fa-info-circle"></i> Connecting to LabNet TCP Chat Server on port 5001...
+    <!-- Panel 3: Active Conversation Workspace -->
+    <section class="chat-thread-panel" aria-label="Active Conversation">
+        <div class="chat-thread-header">
+            <div>
+                <div class="chat-thread-title" id="active-conv-title">LabNet General Channel</div>
+                <div class="chat-thread-sub" id="active-conv-sub">TCP Broadcast (:5001) • Persistent history backed by Supabase</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="badge badge-tcp"><i class="fa-solid fa-network-wired"></i> TCP :5001</span>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="reloadActiveConversation()" title="Reload history from Supabase">
+                    <i class="fa-solid fa-rotate"></i>
+                </button>
             </div>
         </div>
-        <div class="chat-input-row">
-            <input type="text" id="chat-text-input" class="form-input" placeholder="Type message to broadcast across TCP socket..." autocomplete="off">
-            <button class="btn btn-primary" id="btn-chat-send" onclick="sendChatMessage()">
-                <i class="fa-solid fa-paper-plane"></i> Send
+
+        <!-- Dedicated Non-Intrusive Connection Status Strip (Separate from Chat Messages) -->
+        <div class="chat-status-strip">
+            <span id="presence-status-text">
+                <i class="fa-solid fa-shield-halved" style="color: var(--accent); margin-right: 4px;"></i>
+                Signed in as <strong>{{ current_user.display_name }}</strong> ({{ current_user.role }})
+            </span>
+            <span id="delivery-status-text" class="mono">History synced</span>
+        </div>
+
+        <!-- Message Stream -->
+        <div class="chat-messages-scroll" id="chat-messages">
+            <div style="text-align: center; padding: 30px; color: var(--text-muted);">
+                <i class="fa-solid fa-spinner fa-spin"></i> Loading conversation history from Supabase...
+            </div>
+        </div>
+
+        <!-- Message Composer -->
+        <form class="chat-composer" onsubmit="handleChatFormSubmit(event)">
+            <a href="/files" class="btn btn-secondary btn-sm" title="Send a file via TCP/UDP/P2P" style="padding: 9px 11px;">
+                <i class="fa-solid fa-paperclip"></i>
+            </a>
+            <input type="text" id="chat-text-input" placeholder="Write a message to LabNet (persisted in Supabase &amp; streamed via TCP :5001)..." autocomplete="off" maxlength="4000">
+            <button type="submit" id="chat-send-btn" class="btn btn-primary" style="padding: 10px 18px;">
+                <i class="fa-solid fa-paper-plane"></i>
+                <span>Send</span>
             </button>
-        </div>
-        <div class="chat-footer-status text-sm text-muted" id="chat-delivery-status">
-            Ready to communicate.
-        </div>
-    </div>
+        </form>
+    </section>
 </div>
 {% endblock %}
+
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 {% endblock %}

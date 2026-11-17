@@ -1,246 +1,32 @@
 /**
- * LabNet Real-Time TCP Chat Client (web/static/js/chat.js)
- * ========================================================
- * Connects the browser to the Flask-SocketIO gateway.
- * Messages flow: Browser -> WebSocket -> Flask -> TCP Socket -> TCP Chat Server -> Broadcast.
+ * LabNet Persistent & Real-Time TCP Chat Client (web/static/js/chat.js)
+ * =====================================================================
+ * Architecture:
+ *  - Persistent history loaded chronologically from Supabase `/api/chat/history`
+ *    (so messages sent while VM2 was offline appear immediately upon return).
+ *  - Live delivery flows over Socket.IO -> Flask -> Raw TCP Socket (:5001) -> Broadcast.
+ *  - Deduplication keyed strictly by canonical Supabase message UUID (`renderedMsgIds`).
+ *  - Connection / presence events stay in the subtle status strip, NEVER polluting messages.
  */
 
 let socket = null;
-let packetsSent = 0;
-let packetsRecv = 0;
 let renderedMsgIds = new Set();
+let allConversations = [];
+let activeConvId = "general";
+let convFilter = "all";
+let oldestCursor = null;
+let hasMoreHistory = false;
+
+const CURRENT_USER = window.LABNET_USER || {};
 
 document.addEventListener("DOMContentLoaded", function () {
     initChatSocket();
-    setupUserIdentity();
+    loadConversations();
+    loadHistory(true);
 });
 
-function getActiveUsername() {
-    const select = document.getElementById("user-select");
-    if (!select) return "Researcher";
-    if (select.value === "Custom") {
-        const customInput = document.getElementById("custom-user-input");
-        return (customInput && customInput.value.trim()) || "CustomUser";
-    }
-    return select.value;
-}
-
-function getActiveDeviceIP() {
-    const user = getActiveUsername();
-    if (user === "Researcher") return "192.168.66.128";
-    if (user === "Student") return "192.168.66.130";
-    if (user === "Faculty") return "192.168.66.131";
-    return window.location.hostname || "192.168.66.128";
-}
-
-function setupUserIdentity() {
-    // If running on port 8000 on a specific host or query param, detect persona
-    const urlParams = new URLSearchParams(window.location.search);
-    const userParam = urlParams.get("user");
-    const select = document.getElementById("user-select");
-    if (userParam && select) {
-        for (let i = 0; i < select.options.length; i++) {
-            if (select.options[i].value.toLowerCase() === userParam.toLowerCase()) {
-                select.selectedIndex = i;
-                break;
-            }
-        }
-    }
-    changeUser();
-}
-
-function changeUser() {
-    const select = document.getElementById("user-select");
-    const customWrap = document.getElementById("custom-user-wrap");
-    const devIpSpan = document.getElementById("disp-device-ip");
-
-    if (select && select.value === "Custom") {
-        if (customWrap) customWrap.style.display = "block";
-    } else {
-        if (customWrap) customWrap.style.display = "none";
-    }
-
-    if (devIpSpan) {
-        devIpSpan.textContent = getActiveDeviceIP();
-    }
-}
-
-function initChatSocket() {
-    const badge = document.getElementById("conn-badge");
-
-    // Initialize Socket.IO connection to Flask
-    socket = io({
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 20
-    });
-
-    socket.on("connect", function () {
-        console.log("[SOCKET.IO] Connected to Flask gateway.");
-        updateConnectionBadge(true);
-        addSystemNotice("Connected to Flask Web Gateway & TCP Chat Bridge.");
-    });
-
-    socket.on("disconnect", function () {
-        console.warn("[SOCKET.IO] Disconnected from Flask gateway.");
-        updateConnectionBadge(false);
-        addSystemNotice("Disconnected from gateway. Reconnecting...");
-    });
-
-    socket.on("connect_error", function (err) {
-        console.error("[SOCKET.IO] Connection error:", err);
-        updateConnectionBadge(false);
-    });
-
-    socket.on("connection_status", function (data) {
-        if (data.server_ip) {
-            const ipEl = document.getElementById("disp-server-ip");
-            if (ipEl) ipEl.textContent = data.server_ip;
-        }
-    });
-
-    // Handle real-time broadcast frames from TCP Chat Server
-    socket.on("chat_broadcast", function (msg) {
-        packetsRecv++;
-        updatePacketCounters();
-
-        // Prevent duplicate rendering if already rendered
-        if (msg.id && renderedMsgIds.has(msg.id)) {
-            return;
-        }
-        if (msg.id) renderedMsgIds.add(msg.id);
-
-        renderChatMessage(msg);
-    });
-
-    // Handle delivery acknowledgments
-    socket.on("chat_ack", function (ack) {
-        const statusEl = document.getElementById("chat-delivery-status");
-        if (statusEl) {
-            statusEl.innerHTML = `<span class="text-green"><i class="fa-solid fa-check-double"></i> Delivered via TCP Socket [5001] at ${ack.timestamp}</span>`;
-        }
-    });
-
-    socket.on("chat_error", function (err) {
-        const statusEl = document.getElementById("chat-delivery-status");
-        if (statusEl) {
-            statusEl.innerHTML = `<span class="text-red"><i class="fa-solid fa-triangle-exclamation"></i> Error: ${err.error}</span>`;
-        }
-    });
-}
-
-function updateConnectionBadge(isConnected) {
-    const badge = document.getElementById("conn-badge");
-    if (!badge) return;
-
-    if (isConnected) {
-        badge.className = "badge badge-success";
-        badge.innerHTML = '<i class="fa-solid fa-circle"></i> CONNECTED';
-    } else {
-        badge.className = "badge badge-danger";
-        badge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> DISCONNECTED';
-    }
-}
-
-function updatePacketCounters() {
-    const sentEl = document.getElementById("stats-sent");
-    const recvEl = document.getElementById("stats-recv");
-    if (sentEl) sentEl.textContent = packetsSent;
-    if (recvEl) recvEl.textContent = packetsRecv;
-}
-
-function sendChatMessage() {
-    const input = document.getElementById("chat-text-input");
-    if (!input) return;
-
-    const text = input.value.trim();
-    if (!text) return;
-
-    const sender = getActiveUsername();
-    const deviceIP = getActiveDeviceIP();
-
-    // Check socket state
-    if (!socket || !socket.connected) {
-        alert("Cannot send message: WebSocket connection is currently disconnected.");
-        return;
-    }
-
-    const payload = {
-        text: text,
-        sender: sender,
-        device_ip: deviceIP
-    };
-
-    // Emit event to Flask -> Flask writes to TCP socket
-    socket.emit("chat_send", payload);
-
-    packetsSent++;
-    updatePacketCounters();
-    input.value = "";
-
-    const statusEl = document.getElementById("chat-delivery-status");
-    if (statusEl) {
-        statusEl.innerHTML = `<span><i class="fa-solid fa-spinner fa-spin"></i> Transmitting over TCP socket to port 5001...</span>`;
-    }
-}
-
-function renderChatMessage(msg) {
-    const container = document.getElementById("chat-messages");
-    if (!container) return;
-
-    const currentUser = getActiveUsername();
-    const isSelf = (msg.sender === currentUser);
-    const msgType = msg.type || "chat";
-
-    if (msgType === "system") {
-        addSystemNotice(msg.text);
-        return;
-    }
-
-    const item = document.createElement("div");
-    item.className = `chat-bubble ${isSelf ? "bubble-outgoing" : "bubble-incoming"}`;
-
-    const senderBadgeClass = getBadgeClassForUser(msg.sender);
-
-    item.innerHTML = `
-        <div class="bubble-header">
-            <span class="bubble-sender ${senderBadgeClass}">${escapeHtml(msg.sender)}</span>
-            <span class="bubble-ip">${escapeHtml(msg.device_ip || msg.origin_addr || "")}</span>
-            <span class="bubble-time">${escapeHtml(msg.timestamp || "")}</span>
-        </div>
-        <div class="bubble-content">${escapeHtml(msg.text)}</div>
-        <div class="bubble-footer">
-            <span class="proto-tag"><i class="fa-solid fa-network-wired"></i> TCP</span>
-            ${isSelf ? '<span class="status-tag"><i class="fa-solid fa-check"></i> Dispatched</span>' : ''}
-        </div>
-    `;
-
-    container.appendChild(item);
-    container.scrollTop = container.scrollHeight;
-}
-
-function addSystemNotice(text) {
-    const container = document.getElementById("chat-messages");
-    if (!container) return;
-
-    const notice = document.createElement("div");
-    notice.className = "system-message";
-    notice.innerHTML = `<i class="fa-solid fa-bell"></i> ${escapeHtml(text)}`;
-    container.appendChild(notice);
-    container.scrollTop = container.scrollHeight;
-}
-
-function getBadgeClassForUser(username) {
-    if (!username) return "user-default";
-    const u = username.toLowerCase();
-    if (u.includes("researcher")) return "user-researcher";
-    if (u.includes("student")) return "user-student";
-    if (u.includes("faculty")) return "user-faculty";
-    return "user-default";
-}
-
 function escapeHtml(str) {
-    if (!str) return "";
+    if (str === null || str === undefined) return "";
     return String(str)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
@@ -249,9 +35,382 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 
-// Support Enter key submission
-document.addEventListener("keypress", function (e) {
-    if (e.key === "Enter" && document.activeElement && document.activeElement.id === "chat-text-input") {
-        sendChatMessage();
+function getInitials(name) {
+    if (!name) return "LN";
+    const parts = String(name).trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return String(name).slice(0, 2).toUpperCase();
+}
+
+function formatShortTime(ts) {
+    if (!ts) return "";
+    const s = String(ts).replace("T", " ");
+    return s.length >= 16 ? s.slice(11, 16) : s;
+}
+
+function updateBridgePill(wsConnected, tcpConnected) {
+    const pill = document.getElementById("tcp-bridge-pill");
+    const dot = document.getElementById("tcp-bridge-dot");
+    const txt = document.getElementById("tcp-bridge-text");
+    if (!pill || !dot || !txt) return;
+
+    if (wsConnected && tcpConnected) {
+        pill.className = "badge badge-online";
+        dot.className = "status-dot online";
+        txt.textContent = "TCP :5001 Connected";
+    } else if (wsConnected && !tcpConnected) {
+        pill.className = "badge badge-warning";
+        dot.className = "status-dot warn";
+        txt.textContent = "TCP Server Offline (History Active)";
+    } else {
+        pill.className = "badge badge-offline";
+        dot.className = "status-dot offline";
+        txt.textContent = "Gateway Reconnecting...";
     }
-});
+}
+
+function setDeliveryStatus(htmlText) {
+    const el = document.getElementById("delivery-status-text");
+    if (el) el.innerHTML = htmlText;
+}
+
+function initChatSocket() {
+    socket = io({
+        reconnection: true,
+        reconnectionDelay: 1500,
+        reconnectionAttempts: 30
+    });
+
+    socket.on("connect", function () {
+        // Re-sync missed messages cleanly upon reconnection
+        loadHistory(false, true);
+    });
+
+    socket.on("disconnect", function () {
+        updateBridgePill(false, false);
+        setDeliveryStatus('<span style="color: var(--danger);">WebSocket disconnected — retrying...</span>');
+    });
+
+    socket.on("connection_status", function (data) {
+        updateBridgePill(true, Boolean(data.tcp_bridge_connected));
+    });
+
+    // Separate channel for socket presence events (never inserted as chat bubbles)
+    socket.on("presence_update", function (evt) {
+        const strip = document.getElementById("presence-status-text");
+        if (strip && evt.active_clients !== undefined && evt.active_clients !== null) {
+            strip.innerHTML = `<i class="fa-solid fa-circle-nodes" style="color: var(--accent); margin-right: 4px;"></i>TCP Chat Server active sockets: <strong>${evt.active_clients}</strong> • Last update ${escapeHtml(formatShortTime(evt.timestamp))}`;
+        }
+    });
+
+    // Live chat broadcast from TCP Chat Server (:5001)
+    socket.on("chat_broadcast", function (msg) {
+        if (!msg || msg.type !== "chat") return;
+
+        // If user is currently viewing a filtered participant view, only append matching sender
+        if (activeConvId !== "general" && msg.sender_user_id && msg.sender_user_id !== activeConvId) {
+            loadConversations();
+            return;
+        }
+
+        appendMessageIfNew(msg, true);
+        loadConversations();
+    });
+
+    // Delivery acknowledgment for outgoing messages
+    socket.on("chat_ack", function (ack) {
+        if (ack.message) {
+            appendMessageIfNew(ack.message, true);
+            updateMessageStatusBadge(ack.id, "delivered");
+        }
+        setDeliveryStatus(`<span style="color: var(--success);"><i class="fa-solid fa-check-double"></i> Delivered via TCP :5001 (${escapeHtml(formatShortTime(ack.timestamp))})</span>`);
+        loadConversations();
+    });
+
+    // Explicit failure handling when TCP server is unreachable
+    socket.on("chat_error", function (err) {
+        if (err.message) {
+            appendMessageIfNew(err.message, true);
+            updateMessageStatusBadge(err.id, "failed");
+        }
+        setDeliveryStatus(`<span style="color: var(--danger);"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(err.error || "Delivery failed")}</span>`);
+    });
+}
+
+async function loadConversations() {
+    try {
+        const resp = await fetch("/api/chat/conversations");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        allConversations = data.conversations || [];
+        updateBridgePill(Boolean(socket && socket.connected), Boolean(data.tcp_bridge_connected));
+        renderConversations();
+    } catch (e) {
+        console.warn("Failed to load conversations:", e);
+    }
+}
+
+function setConvFilter(mode) {
+    convFilter = mode;
+    document.getElementById("filter-all").classList.toggle("active", mode === "all");
+    document.getElementById("filter-online").classList.toggle("active", mode === "online");
+    renderConversations();
+}
+
+function filterConversations() {
+    renderConversations();
+}
+
+function renderConversations() {
+    const listEl = document.getElementById("conv-list");
+    if (!listEl) return;
+
+    const q = (document.getElementById("conv-search-input").value || "").toLowerCase();
+    const filtered = allConversations.filter(c => {
+        if (convFilter === "online" && !c.online) return false;
+        if (!q) return true;
+        return (c.title || "").toLowerCase().includes(q) || (c.last_message || "").toLowerCase().includes(q);
+    });
+
+    if (!filtered.length) {
+        listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 12.5px;">No matching conversations.</div>`;
+        return;
+    }
+
+    listEl.innerHTML = filtered.map(c => {
+        const isActive = c.id === activeConvId;
+        const avatarContent = c.type === "channel"
+            ? '<i class="fa-solid fa-hashtag"></i>'
+            : escapeHtml(getInitials(c.title));
+        return `
+        <div class="conv-item ${isActive ? "active" : ""}" onclick="selectConversation('${escapeHtml(c.id)}')">
+            <div class="conv-avatar-wrap">
+                <div class="avatar-circle">${avatarContent}</div>
+                <span class="conv-online-dot ${c.online ? "online" : ""}"></span>
+            </div>
+            <div class="conv-info">
+                <div class="conv-top-row">
+                    <span class="conv-title">${escapeHtml(c.title)}</span>
+                    <span class="conv-time">${escapeHtml(formatShortTime(c.last_timestamp))}</span>
+                </div>
+                <div class="conv-preview">${escapeHtml(c.last_message)}</div>
+            </div>
+        </div>`;
+    }).join("");
+}
+
+function selectConversation(convId) {
+    activeConvId = convId;
+    const conv = allConversations.find(c => c.id === convId);
+    if (conv) {
+        document.getElementById("active-conv-title").textContent = conv.title;
+        document.getElementById("active-conv-sub").textContent = conv.type === "channel"
+            ? "TCP Broadcast (:5001) • Shared persistent channel across LabNet VMs"
+            : `${conv.subtitle} • Filtered messages from this participant`;
+    }
+    renderConversations();
+    loadHistory(true);
+}
+
+function reloadActiveConversation() {
+    loadHistory(true);
+}
+
+async function loadHistory(reset = true, silentMerge = false) {
+    const container = document.getElementById("chat-messages");
+    if (!container) return;
+
+    if (reset && !silentMerge) {
+        renderedMsgIds.clear();
+        oldestCursor = null;
+        container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading persistent chat history...</div>`;
+    }
+
+    let url = `/api/chat/history?limit=50`;
+    if (activeConvId !== "general") {
+        url += `&sender_user_id=${encodeURIComponent(activeConvId)}`;
+    }
+    if (!reset && !silentMerge && oldestCursor) {
+        url += `&before=${encodeURIComponent(oldestCursor)}`;
+    }
+
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        updateBridgePill(Boolean(socket && socket.connected), Boolean(data.tcp_bridge_connected));
+        const messages = data.messages || [];
+
+        if (silentMerge) {
+            messages.forEach(m => appendMessageIfNew(m, true));
+            return;
+        }
+
+        hasMoreHistory = Boolean(data.has_more);
+        if (data.oldest_cursor) {
+            oldestCursor = data.oldest_cursor;
+        }
+
+        if (reset) {
+            container.innerHTML = "";
+            if (!messages.length) {
+                container.innerHTML = `
+                <div id="chat-empty-state" style="margin:auto; text-align:center; color:var(--text-muted); max-width:340px;">
+                    <i class="fa-regular fa-comments" style="font-size:32px; color:var(--border-strong); margin-bottom:10px;"></i>
+                    <div style="font-weight:600; color:var(--text-primary); margin-bottom:4px;">No messages yet</div>
+                    <div style="font-size:12.5px;">Send a message below to persist it in Supabase and stream it live over TCP port 5001.</div>
+                </div>`;
+                return;
+            }
+
+            if (hasMoreHistory) {
+                insertLoadOlderButton(container);
+            }
+            messages.forEach(m => appendMessageIfNew(m, false));
+            container.scrollTop = container.scrollHeight;
+            setDeliveryStatus(`Loaded ${messages.length} persisted message(s)`);
+        } else {
+            // Prepend older paginated messages above current items
+            const oldBtn = document.getElementById("btn-load-older-wrap");
+            if (oldBtn) oldBtn.remove();
+
+            const prevHeight = container.scrollHeight;
+            const frag = document.createDocumentFragment();
+            if (hasMoreHistory) {
+                const btnWrap = createLoadOlderElement();
+                frag.appendChild(btnWrap);
+            }
+            messages.forEach(m => {
+                if (m.id && renderedMsgIds.has(m.id)) return;
+                if (m.id) renderedMsgIds.add(m.id);
+                frag.appendChild(buildMessageElement(m));
+            });
+            container.insertBefore(frag, container.firstChild);
+            container.scrollTop = container.scrollHeight - prevHeight;
+        }
+    } catch (err) {
+        if (reset && !silentMerge) {
+            container.innerHTML = `<div class="alert alert-danger" style="margin:20px;">Failed to load chat history: ${escapeHtml(err.message)}</div>`;
+        }
+    }
+}
+
+function createLoadOlderElement() {
+    const div = document.createElement("div");
+    div.id = "btn-load-older-wrap";
+    div.className = "load-older-wrap";
+    div.innerHTML = `<button type="button" class="btn btn-secondary btn-sm" onclick="loadHistory(false, false)"><i class="fa-solid fa-clock-rotate-left"></i> Load Older Messages</button>`;
+    return div;
+}
+
+function insertLoadOlderButton(container) {
+    container.insertBefore(createLoadOlderElement(), container.firstChild);
+}
+
+function appendMessageIfNew(msg, shouldScroll) {
+    if (!msg) return;
+    if (msg.id && renderedMsgIds.has(msg.id)) {
+        updateMessageStatusBadge(msg.id, msg.status);
+        return;
+    }
+    if (msg.id) renderedMsgIds.add(msg.id);
+
+    const container = document.getElementById("chat-messages");
+    if (!container) return;
+
+    const emptyEl = document.getElementById("chat-empty-state");
+    if (emptyEl) emptyEl.remove();
+
+    const el = buildMessageElement(msg);
+    container.appendChild(el);
+    if (shouldScroll) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+function renderStatusIcon(status) {
+    if (status === "failed") {
+        return `<span style="color:#fecaca; font-weight:600;"><i class="fa-solid fa-circle-exclamation"></i> Failed</span>`;
+    }
+    if (status === "sent") {
+        return `<i class="fa-solid fa-check"></i> Sent`;
+    }
+    return `<i class="fa-solid fa-check-double"></i> Delivered`;
+}
+
+function updateMessageStatusBadge(msgId, status) {
+    if (!msgId || !status) return;
+    const el = document.querySelector(`[data-msg-status="${msgId}"]`);
+    if (el) {
+        el.innerHTML = renderStatusIcon(status);
+    }
+}
+
+function buildMessageElement(msg) {
+    const isSelf = CURRENT_USER.id && msg.sender_user_id === CURRENT_USER.id;
+    const row = document.createElement("div");
+    row.className = `msg-row ${isSelf ? "outgoing" : "incoming"}`;
+    if (msg.id) row.setAttribute("data-msg-id", msg.id);
+
+    const senderName = msg.sender || "LabNet User";
+    const roleLabel = msg.sender_role ? `<span class="badge badge-${escapeHtml(msg.sender_role)}" style="font-size:10px; padding:1px 6px;">${escapeHtml(msg.sender_role)}</span>` : "";
+    const ipLabel = msg.device_ip ? `<span class="mono" style="font-size:10.5px;">${escapeHtml(msg.device_ip)}</span>` : "";
+    const timeLabel = formatShortTime(msg.timestamp || msg.sent_at);
+
+    row.innerHTML = `
+        <div class="avatar-circle" style="width:32px; height:32px; font-size:12px;">${escapeHtml(getInitials(senderName))}</div>
+        <div style="min-width: 0;">
+            <div class="msg-meta">
+                <span class="msg-sender">${escapeHtml(senderName)}</span>
+                ${roleLabel}
+                ${ipLabel}
+                <span>${escapeHtml(timeLabel)}</span>
+            </div>
+            <div class="msg-bubble">
+                <div>${escapeHtml(msg.text)}</div>
+                <div class="msg-footer">
+                    <span class="mono" style="font-size:10px;">${escapeHtml(msg.protocol || "TCP")}</span>
+                    ${isSelf ? `<span data-msg-status="${escapeHtml(msg.id || "")}">${renderStatusIcon(msg.status)}</span>` : ""}
+                </div>
+            </div>
+        </div>
+    `;
+    return row;
+}
+
+function handleChatFormSubmit(e) {
+    e.preventDefault();
+    const input = document.getElementById("chat-text-input");
+    const text = (input.value || "").trim();
+    if (!text) return;
+
+    if (socket && socket.connected) {
+        socket.emit("chat_send", { text: text });
+        input.value = "";
+        setDeliveryStatus('<i class="fa-solid fa-spinner fa-spin"></i> Persisting &amp; transmitting via TCP :5001...');
+    } else {
+        // Fallback to authenticated HTTP POST so message still persists even if WebSocket is reconnecting
+        fetch("/api/chat/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.message) {
+                appendMessageIfNew(data.message, true);
+            }
+            if (data.status === "delivered") {
+                setDeliveryStatus('<span style="color:var(--success);"><i class="fa-solid fa-check-double"></i> Delivered via TCP :5001</span>');
+            } else {
+                setDeliveryStatus(`<span style="color:var(--danger);">${escapeHtml(data.error || "Saved offline; live TCP failed")}</span>`);
+            }
+            input.value = "";
+            loadConversations();
+        })
+        .catch(err => {
+            setDeliveryStatus(`<span style="color:var(--danger);">Transmission error: ${escapeHtml(err.message)}</span>`);
+        });
+    }
+}

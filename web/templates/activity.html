@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Activity Logs{% endblock %}
+{% block page_title %}Network Activity &amp; Audit Logs{% endblock %}
+{% block page_subtitle %}Administrator-only system event stream persisted in Supabase network_events{% endblock %}
+
+{% block topbar_actions %}
+<button type="button" class="btn btn-secondary btn-sm" onclick="loadActivity()">
+    <i class="fa-solid fa-rotate"></i> Refresh Logs
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom: 20px;">
+    <div class="card-header" style="flex-wrap: wrap;">
+        <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Network Event Audit Trail</div>
+        <div style="display: flex; gap: 8px;">
+            <select id="ev-type-filter" class="form-select" style="width: 155px; padding: 6px 10px;" onchange="loadActivity()">
+                <option value="">All Event Types</option>
+                <option value="heartbeat">Heartbeat</option>
+                <option value="timeout">Timeout</option>
+                <option value="disconnect">Disconnect</option>
+                <option value="transfer">Transfer</option>
+                <option value="connection">Connection</option>
+                <option value="packet_loss">Packet Loss</option>
+                <option value="diagnostic">Diagnostic</option>
+                <option value="auth">Authentication</option>
+            </select>
+            <select id="ev-proto-filter" class="form-select" style="width: 135px; padding: 6px 10px;" onchange="loadActivity()">
+                <option value="">All Protocols</option>
+                <option value="TCP">TCP</option>
+                <option value="UDP">UDP</option>
+                <option value="HTTP">HTTP</option>
+                <option value="DNS">DNS</option>
+                <option value="SMTP">SMTP</option>
+                <option value="POP3">POP3</option>
+                <option value="ICMP">ICMP</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body no-pad">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Event Type</th>
+                        <th>Protocol</th>
+                        <th>Device</th>
+                        <th>Source IP</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="activity-tbody">
+                    <tr><td colspan="6" style="text-align: center; padding: 22px; color: var(--text-muted);">Loading network events...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Admin User Directory (Authoritative Profiles Table) -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-title"><i class="fa-solid fa-users"></i> Provisioned User Profiles</div>
+        <span class="badge badge-admin">Admin View</span>
+    </div>
+    <div class="card-body no-pad">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Display Name</th>
+                        <th>Role</th>
+                        <th>User UUID</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-users-tbody">
+                    <tr><td colspan="4" style="text-align: center; padding: 18px; color: var(--text-muted);">Loading user directory...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function esc(s) {
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function fmtTime(iso) {
+    if (!iso) return "—";
+    return String(iso).replace("T", " ").slice(0, 19);
+}
+
+async function loadActivity() {
+    const evType = document.getElementById("ev-type-filter").value;
+    const proto = document.getElementById("ev-proto-filter").value;
+    let url = "/api/monitoring/events?limit=100";
+    if (evType) url += `&event_type=${encodeURIComponent(evType)}`;
+    if (proto) url += `&protocol=${encodeURIComponent(proto)}`;
+
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const evs = data.events || [];
+        document.getElementById("activity-tbody").innerHTML = evs.length
+            ? evs.map(e => `
+                <tr>
+                    <td class="mono" style="color: var(--text-muted);">${fmtTime(e.timestamp)}</td>
+                    <td><span class="badge ${e.event_type === 'timeout' || e.event_type === 'disconnect' ? 'badge-danger' : 'badge-neutral'}">${esc(e.event_type)}</span></td>
+                    <td><span class="badge badge-primary">${esc(e.protocol)}</span></td>
+                    <td>${esc(e.device_name)}</td>
+                    <td class="mono">${esc(e.source_ip)}</td>
+                    <td style="color: var(--text-secondary); font-size: 12.5px;">${esc(e.detail)}</td>
+                </tr>`).join("")
+            : `<tr><td colspan="6" style="text-align:center; padding:22px; color:var(--text-muted);">No matching network events found.</td></tr>`;
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function loadAdminUsers() {
+    try {
+        const resp = await fetch("/api/admin/users");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const profs = data.profiles || [];
+        document.getElementById("admin-users-tbody").innerHTML = profs.length
+            ? profs.map(p => `
+                <tr>
+                    <td style="font-weight: 600;">${esc(p.display_name)}</td>
+                    <td><span class="badge badge-${esc(p.role)}">${esc(p.role)}</span></td>
+                    <td class="mono" style="color: var(--text-muted);">${esc(p.id)}</td>
+                    <td class="mono" style="color: var(--text-muted);">${fmtTime(p.created_at)}</td>
+                </tr>`).join("")
+            : `<tr><td colspan="4" style="text-align:center; padding:18px; color:var(--text-muted);">No user profiles found.</td></tr>`;
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+loadActivity();
+loadAdminUsers();
+</script>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Account Settings{% endblock %}
+{% block page_title %}Account Settings{% endblock %}
+{% block page_subtitle %}Authenticated Supabase profile, role authorization, and active session details{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-regular fa-id-badge"></i> Profile Identity</div>
+            <span class="badge badge-{{ current_user.role }}">{{ current_user.role | upper }}</span>
+        </div>
+        <div class="card-body">
+            <div id="profile-alert" style="display: none; margin-bottom: 14px;"></div>
+
+            <form onsubmit="saveProfile(event)">
+                <div class="form-group">
+                    <label class="form-label" for="acc-name">Display Name</label>
+                    <input type="text" id="acc-name" class="form-input" value="{{ current_user.display_name }}" required minlength="2">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email Address</label>
+                    <input type="email" class="form-input" value="{{ current_user.email }}" readonly style="background: var(--surface-subtle); color: var(--text-muted);">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Authoritative Role (Read-Only)</label>
+                    <input type="text" class="form-input" value="{{ current_user.role | capitalize }}" readonly style="background: var(--surface-subtle); color: var(--text-muted);">
+                    <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">
+                        Roles are stored in PostgreSQL <span class="mono">profiles.role</span> and enforced server-side.
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Supabase User UUID</label>
+                    <input type="text" class="form-input mono" value="{{ current_user.id }}" readonly style="background: var(--surface-subtle); color: var(--text-muted);">
+                </div>
+                <button type="submit" id="btn-save-profile" class="btn btn-primary">
+                    <i class="fa-solid fa-floppy-disk"></i> Save Display Name
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-shield-halved"></i> Session &amp; Security</div>
+        </div>
+        <div class="card-body">
+            <p style="margin: 0 0 12px; color: var(--text-secondary);">
+                Your browser session is authenticated against Supabase Auth with HTTP-only session cookies.
+            </p>
+            <div class="alert alert-info" style="margin-bottom: 16px;">
+                <i class="fa-solid fa-circle-info" style="margin-top: 2px;"></i>
+                <span>Signing out closes your web session cleanly. If you started <span class="mono">clients/heartbeat_client.py</span> in a separate terminal, stop that process independently with <span class="mono">Ctrl+C</span> to test offline timeout detection.</span>
+            </div>
+            <a href="/logout" class="btn btn-secondary" style="color: var(--danger); border-color: #fecaca;">
+                <i class="fa-solid fa-right-from-bracket"></i> Sign Out of LabNet
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function saveProfile(e) {
+    e.preventDefault();
+    const btn = document.getElementById("btn-save-profile");
+    const alertEl = document.getElementById("profile-alert");
+    const display_name = document.getElementById("acc-name").value.trim();
+
+    btn.disabled = true;
+    try {
+        const resp = await fetch("/api/auth/profile", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({display_name})
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            alertEl.className = "alert alert-success";
+            alertEl.textContent = "Display name updated successfully in Supabase.";
+            alertEl.style.display = "flex";
+            setTimeout(() => window.location.reload(), 700);
+        } else {
+            alertEl.className = "alert alert-danger";
+            alertEl.textContent = data.error || "Update failed.";
+            alertEl.style.display = "flex";
+        }
+    } catch (err) {
+        alertEl.className = "alert alert-danger";
+        alertEl.textContent = "Network error: " + err.message;
+        alertEl.style.display = "flex";
+    } finally {
+        btn.disabled = false;
+    }
+}
+</script>
+{% endblock %}
