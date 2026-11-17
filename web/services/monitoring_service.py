@@ -18,6 +18,10 @@ HEARTBEAT_TIMEOUT = float(config.get("HEARTBEAT_TIMEOUT", 10.0))
 events = []
 peers_registry = {}  # {peer_name: {"peer_name", "ip", "port", "status", "last_seen"}}
 
+# Active browser WebSocket sessions mapped to device UUIDs: {sid: device_id}
+_ws_devices_lock = threading.Lock()
+_ws_active_devices = {}
+
 stats = {
     "server_status": "ONLINE",
     "tcp_connections": 0,
@@ -36,9 +40,11 @@ stats = {
 
 # Supabase repositories
 try:
-    from web.database.repositories.device_repository import list_devices, enforce_heartbeat_timeouts
+    from web.database.repositories.device_repository import (
+        list_devices, enforce_heartbeat_timeouts, update_device_status
+    )
     from web.database.repositories.event_repository import list_events, record_event
-    from web.database.repositories.session_repository import list_sessions
+    from web.database.repositories.session_repository import list_sessions, update_session
     from web.database.repositories.file_repository import list_transfers
     from web.database.repositories.chat_repository import count_messages
     from web.database.repositories.heartbeat_repository import list_heartbeats
@@ -46,6 +52,25 @@ try:
 except Exception as e:
     _db_available = False
     print(f"[MONITORING] Supabase repositories unavailable: {e}")
+
+
+def register_ws_device(sid: str, device_id: str):
+    if not sid or not device_id:
+        return
+    with _ws_devices_lock:
+        _ws_active_devices[sid] = str(device_id)
+
+
+def unregister_ws_device(sid: str):
+    if not sid:
+        return None
+    with _ws_devices_lock:
+        return _ws_active_devices.pop(sid, None)
+
+
+def get_active_ws_device_ids() -> set:
+    with _ws_devices_lock:
+        return set(_ws_active_devices.values())
 
 
 def add_event(protocol_title, detail_msg, event_type=None, source_ip=None, destination_ip=None, device_id=None):
@@ -112,21 +137,84 @@ def _get_listening_ports_passive():
     return tcp_ports, udp_ports
 
 
+def refresh_service_ports():
+    """Updates live listening states of all core LabNet ports passively."""
+    tcp_ports, udp_ports = _get_listening_ports_passive()
+    stats["tcp_chat_server_active"] = 5001 in tcp_ports
+    stats["tcp_file_server_active"] = 2121 in tcp_ports
+    stats["udp_file_server_active"] = 2122 in udp_ports
+    stats["udp_heartbeat_server_active"] = 6000 in udp_ports
+    stats["smtp_server_active"] = 1025 in tcp_ports
+    stats["pop3_server_active"] = 1100 in tcp_ports
+    return {
+        "tcp_chat_5001": stats["tcp_chat_server_active"],
+        "tcp_file_2121": stats["tcp_file_server_active"],
+        "udp_file_2122": stats["udp_file_server_active"],
+        "udp_heartbeat_6000": stats["udp_heartbeat_server_active"],
+        "smtp_1025": stats["smtp_server_active"],
+        "pop3_1100": stats["pop3_server_active"]
+    }
+
+
+def _touch_active_ws_devices():
+    """Keeps `last_seen_at` fresh for workstations with an actively connected browser Socket.IO session."""
+    if not _db_available:
+        return
+    for did in get_active_ws_device_ids():
+        try:
+            update_device_status(did, "online", update_last_seen=True)
+        except Exception:
+            pass
+
+
+def _expire_stale_http_sessions(max_age_minutes: float = 30.0, offline_device_ids: set = None):
+    """
+    Closes abandoned HTTP sessions so active session counts stay accurate:
+    - Any active HTTP session older than `max_age_minutes`
+    - Any active HTTP session whose associated device is now offline
+    - Any orphan active HTTP session (source_device_id is None) older than 5 minutes
+    """
+    if not _db_available:
+        return
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    offline_ids = offline_device_ids or set()
+    try:
+        sess_list = list_sessions(limit=100)
+        for s in sess_list:
+            if s.get("status") != "active" or s.get("protocol") != "HTTP":
+                continue
+            src_dev = s.get("source_device_id")
+            if src_dev and src_dev in offline_ids:
+                update_session(s["id"], status="completed")
+                continue
+            started = s.get("started_at")
+            if not started:
+                continue
+            try:
+                ts = str(started).strip().replace("Z", "+00:00")
+                ts = re.sub(r"\.(\d+)", lambda m: "." + m.group(1).ljust(6, "0")[:6], ts)
+                dt = datetime.datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=datetime.timezone.utc)
+                age_sec = (now_utc - dt).total_seconds()
+                limit_sec = 300.0 if not src_dev else (max_age_minutes * 60.0)
+                if age_sec > limit_sec:
+                    update_session(s["id"], status="completed")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def monitor_servers():
     """Passively monitors LabNet service ports and enforces device heartbeat timeouts."""
     while True:
         try:
-            tcp_ports, udp_ports = _get_listening_ports_passive()
-            stats["tcp_chat_server_active"] = 5001 in tcp_ports
-            stats["tcp_file_server_active"] = 2121 in tcp_ports
-            stats["udp_file_server_active"] = 2122 in udp_ports
-            stats["udp_heartbeat_server_active"] = 6000 in udp_ports
-            stats["smtp_server_active"] = 1025 in tcp_ports
-            stats["pop3_server_active"] = 1100 in tcp_ports
-
-            # Enforce real heartbeat timeout in Supabase so stale devices go offline automatically
+            refresh_service_ports()
             if _db_available:
+                _touch_active_ws_devices()
                 enforce_heartbeat_timeouts(HEARTBEAT_TIMEOUT)
+                _expire_stale_http_sessions(30.0)
         except Exception as e:
             print(f"[MONITORING LOOP WARN] {e}")
         time.sleep(5.0)
@@ -163,20 +251,22 @@ def get_registered_peers():
 
 def start_monitoring():
     """Starts the passive port monitor and heartbeat timeout reaper thread."""
+    refresh_service_ports()
     threading.Thread(target=monitor_servers, daemon=True).start()
 
 
 def get_network_status():
     """
-    Returns genuine registered devices from Supabase `devices` table after enforcing
-    live heartbeat timeout rules. Never fabricates hardcoded online workstations.
+    Returns genuine registered devices from Supabase `devices` table after touching
+    active browser sessions and enforcing live heartbeat timeout rules.
+    Never fabricates hardcoded online workstations.
     """
     if not _db_available:
         return []
     try:
+        _touch_active_ws_devices()
         enforce_heartbeat_timeouts(HEARTBEAT_TIMEOUT)
         db_devs = list_devices()
-        # Fetch most recent heartbeat latency per device
         recent_hbs = list_heartbeats(limit=100)
         latest_latency = {}
         for hb in recent_hbs:
@@ -258,27 +348,34 @@ def get_stats():
 
 def get_dashboard_overview():
     """
-    Aggregates real backend/database metrics for the Admin & Overview Dashboard.
-    Zero hardcoded sample counts.
+    Aggregates live real-time backend/database metrics for the Main Dashboard.
+    - Refreshes passive listening ports live (never stale).
+    - Enforces heartbeat timeouts and stale HTTP session expiry.
+    - Counts protocol activity across up to 200 recent events, transfers, and heartbeats.
     """
+    live_services = refresh_service_ports()
+
     devices = get_network_status()
     online_devices = [d for d in devices if d["status"] == "ONLINE"]
     offline_devices = [d for d in devices if d["status"] != "ONLINE"]
+    offline_ids = {d["id"] for d in offline_devices if d.get("id")}
 
-    transfers = list_transfers(limit=100) if _db_available else []
+    _expire_stale_http_sessions(30.0, offline_device_ids=offline_ids)
+
+    transfers = list_transfers(limit=200) if _db_available else []
     successful_transfers = [t for t in transfers if t.get("status") == "completed"]
     failed_transfers = [t for t in transfers if t.get("status") == "failed"]
 
-    sessions = list_sessions(limit=50) if _db_available else []
+    sessions = list_sessions(limit=100) if _db_available else []
     active_sessions = [s for s in sessions if s.get("status") == "active"]
 
     total_messages = count_messages() if _db_available else 0
-    recent_events = get_events(limit=15)
-    recent_heartbeats = list_heartbeats(limit=20) if _db_available else []
+    all_recent_events = get_events(limit=200)
+    recent_heartbeats = list_heartbeats(limit=100) if _db_available else []
 
-    # Protocol activity breakdown from real events & transfers
+    # Accurate protocol activity breakdown across real events, transfers, messages, and heartbeats
     protocol_counts = {"TCP": 0, "UDP": 0, "HTTP": 0, "DNS": 0, "SMTP": 0, "POP3": 0, "ICMP": 0}
-    for ev in recent_events:
+    for ev in all_recent_events:
         p = (ev.get("protocol") or "").upper()
         if p in protocol_counts:
             protocol_counts[p] += 1
@@ -286,6 +383,8 @@ def get_dashboard_overview():
         p = (tr.get("protocol") or "").upper()
         if p in protocol_counts:
             protocol_counts[p] += 1
+    protocol_counts["TCP"] += total_messages
+    protocol_counts["UDP"] += len(recent_heartbeats)
 
     return {
         "counts": {
@@ -299,18 +398,11 @@ def get_dashboard_overview():
             "failed_transfers": len(failed_transfers),
             "registered_peers": len(peers_registry)
         },
-        "services": {
-            "tcp_chat_5001": stats["tcp_chat_server_active"],
-            "tcp_file_2121": stats["tcp_file_server_active"],
-            "udp_file_2122": stats["udp_file_server_active"],
-            "udp_heartbeat_6000": stats["udp_heartbeat_server_active"],
-            "smtp_1025": stats["smtp_server_active"],
-            "pop3_1100": stats["pop3_server_active"]
-        },
+        "services": live_services,
         "protocol_activity": protocol_counts,
         "recent_devices": devices[:10],
         "recent_transfers": transfers[:8],
-        "recent_events": recent_events[:10],
+        "recent_events": all_recent_events[:10],
         "recent_heartbeats": recent_heartbeats[:10],
         "server_ip": SERVER_IP,
         "heartbeat_timeout": HEARTBEAT_TIMEOUT

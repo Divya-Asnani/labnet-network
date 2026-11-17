@@ -116,6 +116,15 @@
 <script>
     window.LABNET_USER = {{ (current_user or {}) | tojson }};
     window.LABNET_SERVER_IP = {{ server_ip | tojson }};
+    if (
+        window.LABNET_USER &&
+        window.LABNET_USER.id &&
+        typeof io !== "undefined" &&
+        window.location.pathname !== "/chat" &&
+        window.location.pathname !== "/files"
+    ) {
+        window.labnetPresenceSocket = io();
+    }
 </script>
 {% block scripts %}{% endblock %}
 </body>

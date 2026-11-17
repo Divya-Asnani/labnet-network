@@ -13,7 +13,7 @@
 <div class="alert alert-info" style="margin-bottom: 18px;">
     <i class="fa-solid fa-circle-info" style="margin-top: 2px;"></i>
     <div>
-        <strong>Online Device Definition:</strong> A workstation is marked <strong>ONLINE</strong> strictly while its independent UDP heartbeat client (<span class="mono">clients/heartbeat_client.py</span>) transmits datagrams to UDP port <span class="mono">6000</span>. If heartbeats stop for more than <strong id="lbl-timeout">10</strong> seconds, the server automatically marks the device <strong>OFFLINE</strong> and records a timeout event.
+        <strong>Online Device Definition:</strong> Authenticated browser workstations register automatically on login and stay <strong>ONLINE</strong> via live WebSocket presence, while CLI nodes run <span class="mono">clients/heartbeat_client.py</span> over UDP port <span class="mono">6000</span> (with RTT latency tracking). If a workstation signs out or goes silent for more than <strong id="lbl-timeout">10</strong> seconds, the server automatically marks it <strong>OFFLINE</strong>.
     </div>
 </div>
 

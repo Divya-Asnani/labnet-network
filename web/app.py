@@ -17,7 +17,7 @@ from web.services.udp_file_service import upload_file_udp
 from web.services.monitoring_service import (
     get_network_status, get_events, run_diagnostic, start_monitoring,
     get_stats, get_dashboard_overview, register_peer_node,
-    get_registered_peers, add_event
+    get_registered_peers, add_event, register_ws_device, unregister_ws_device
 )
 from web.services.auth_service import (
     login_required, admin_required, login_user, register_user,
@@ -31,7 +31,7 @@ from clients.p2p_node import send_direct_p2p
 
 # Database Repositories
 from web.database.repositories.profile_repository import list_profiles, update_profile
-from web.database.repositories.device_repository import register_device, get_device_by_ip
+from web.database.repositories.device_repository import register_device, get_device_by_ip, update_device_status
 from web.database.repositories.conversation_repository import (
     is_user_participant,
     get_or_create_direct_conversation,
@@ -156,6 +156,72 @@ def inject_globals():
 # Authentication Routes (Supabase Auth)
 # ============================================================================
 
+def _detect_os_label(user_agent: str) -> str:
+    ua = (user_agent or "").lower()
+    if "ubuntu" in ua:
+        return "Ubuntu Linux"
+    if "linux" in ua:
+        return "Linux"
+    if "windows" in ua:
+        return "Windows"
+    if "mac os" in ua or "macintosh" in ua:
+        return "macOS"
+    return "Ubuntu Linux"
+
+
+def _normalize_client_ip(remote_addr: str) -> str:
+    ip = (remote_addr or "").strip()
+    if ip in ("", "127.0.0.1", "::1", "localhost"):
+        return config.get("SERVER_HOST", "192.168.66.128")
+    return ip
+
+
+def _register_workstation_for_session(user: dict, remote_addr: str, user_agent: str):
+    """
+    Registers or refreshes the authenticated user's workstation in Supabase `devices`,
+    closes any older active HTTP session for that same device, and opens a fresh session.
+    """
+    if not user or not user.get("id"):
+        return None
+
+    client_ip = _normalize_client_ip(remote_addr)
+    server_ip = config.get("SERVER_HOST", "192.168.66.128")
+    os_label = _detect_os_label(user_agent)
+    role_tag = "Server" if client_ip == server_ip else "Workstation"
+    device_name = f"{user.get('display_name', 'LabNet User')} ({client_ip})"
+    hostname = f"labnet-{role_tag.lower()}-{client_ip.split('.')[-1]}"
+
+    ok_dev, dev = register_device(
+        user_id=user["id"],
+        device_name=device_name,
+        hostname=hostname,
+        ip_address=client_ip,
+        os_name=os_label,
+        status="online"
+    )
+    dev_id = dev["id"] if (ok_dev and isinstance(dev, dict) and "id" in dev) else None
+    if dev_id:
+        session["device_id"] = dev_id
+        # Close older duplicate active HTTP sessions for this device so active count stays accurate
+        try:
+            for s in list_sessions(limit=50):
+                if s.get("status") == "active" and s.get("protocol") == "HTTP" and s.get("source_device_id") == dev_id:
+                    update_session(s["id"], status="completed")
+        except Exception:
+            pass
+
+    ok_sess, sess_row = record_session(
+        protocol="HTTP",
+        status="active",
+        source_device_id=dev_id,
+        destination_port=int(get_config_val("FLASK_PORT", 5050))
+    )
+    if ok_sess and isinstance(sess_row, dict) and "id" in sess_row:
+        session["web_session_id"] = sess_row["id"]
+
+    return dev_id
+
+
 @app.route("/login")
 def login_page():
     if session.get("user"):
@@ -167,8 +233,11 @@ def login_page():
 def logout_page():
     user = session.get("user")
     web_session_id = session.get("web_session_id")
+    dev_id = session.get("device_id")
     if web_session_id:
         update_session(web_session_id, status="completed")
+    if dev_id:
+        update_device_status(dev_id, "offline", update_last_seen=False)
     logout_user(user)
     session.clear()
     return redirect(url_for("login_page"))
@@ -183,18 +252,7 @@ def api_auth_login():
     success, result, status_code = login_user(email, password)
     if success:
         session["user"] = result
-        # Record active HTTP session in Supabase network_sessions
-        client_ip = request.remote_addr or "127.0.0.1"
-        dev = get_device_by_ip(client_ip)
-        ok_sess, sess_row = record_session(
-            protocol="HTTP",
-            status="active",
-            source_device_id=dev["id"] if dev else None,
-            destination_port=int(get_config_val("FLASK_PORT", 5050))
-        )
-        if ok_sess and isinstance(sess_row, dict) and "id" in sess_row:
-            session["web_session_id"] = sess_row["id"]
-
+        _register_workstation_for_session(result, request.remote_addr, request.headers.get("User-Agent", ""))
         return jsonify({"status": "success", "user": {
             "id": result["id"],
             "email": result["email"],
@@ -215,9 +273,9 @@ def api_auth_register():
     # SECURITY: Never accept or trust client-supplied `role`. All public signups are `student`.
     success, result, status_code = register_user(email, password, display_name=display_name)
     if success:
-        # Only create Flask session if Supabase confirmed the user and issued an auth session
         if not result.get("requires_confirmation") and result.get("user", {}).get("access_token"):
             session["user"] = result["user"]
+            _register_workstation_for_session(result["user"], request.remote_addr, request.headers.get("User-Agent", ""))
         return jsonify({
             "status": "success",
             "requires_confirmation": result.get("requires_confirmation", False),
@@ -279,8 +337,11 @@ def api_auth_update_profile():
 def api_auth_logout():
     user = session.get("user")
     web_session_id = session.get("web_session_id")
+    dev_id = session.get("device_id")
     if web_session_id:
         update_session(web_session_id, status="completed")
+    if dev_id:
+        update_device_status(dev_id, "offline", update_last_seen=False)
     logout_user(user)
     session.clear()
     return jsonify({"status": "logged_out"})
@@ -293,7 +354,9 @@ def api_auth_logout():
 @app.route("/")
 @login_required
 def index():
-    refresh_session_user()
+    user = refresh_session_user()
+    if user and not session.get("device_id"):
+        _register_workstation_for_session(user, request.remote_addr, request.headers.get("User-Agent", ""))
     return render_template("dashboard.html")
 
 
@@ -363,9 +426,24 @@ def account():
 # Dashboard, Monitoring & Admin APIs
 # ============================================================================
 
+def _touch_request_workstation():
+    """Ensures an authenticated browser's workstation is registered and freshly stamped online."""
+    user = session.get("user")
+    if not user or not user.get("id"):
+        return
+    dev_id = session.get("device_id")
+    if not dev_id:
+        _register_workstation_for_session(
+            user, request.remote_addr, request.headers.get("User-Agent", "")
+        )
+    else:
+        update_device_status(dev_id, "online", update_last_seen=True)
+
+
 @app.route("/api/dashboard/overview", methods=["GET"])
 @login_required
 def api_dashboard_overview():
+    _touch_request_workstation()
     overview = get_dashboard_overview()
     overview["tcp_chat_bridge"] = chat_bridge.connected
     return jsonify(overview)
@@ -374,6 +452,7 @@ def api_dashboard_overview():
 @app.route("/api/network/status", methods=["GET"])
 @login_required
 def api_network_status():
+    _touch_request_workstation()
     return jsonify({
         "status": get_network_status(),
         "events": get_events(limit=30),
@@ -385,6 +464,7 @@ def api_network_status():
 @app.route("/api/monitoring/devices", methods=["GET"])
 @login_required
 def api_monitoring_devices():
+    _touch_request_workstation()
     return jsonify({
         "devices": get_network_status(),
         "heartbeat_timeout": float(get_config_val("HEARTBEAT_TIMEOUT", 10.0))
@@ -1036,6 +1116,14 @@ def handle_connect():
     if user and user.get("id"):
         # Join ONLY this authenticated user's private notification room
         join_room(f"user:{user['id']}")
+        dev_id = session.get("device_id")
+        if not dev_id:
+            dev_id = _register_workstation_for_session(
+                user, request.remote_addr, request.headers.get("User-Agent", "")
+            )
+        if dev_id:
+            register_ws_device(request.sid, dev_id)
+            update_device_status(dev_id, "online", update_last_seen=True)
     emit("connection_status", {
         "status": "CONNECTED",
         "authenticated": bool(user),
@@ -1043,6 +1131,11 @@ def handle_connect():
         "server_ip": config.get("SERVER_HOST", "192.168.66.128"),
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
+
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    unregister_ws_device(request.sid)
 
 
 @socketio.on("join_conversation")

@@ -1,5 +1,16 @@
+import re
 import datetime
 from web.database.supabase_client import get_supabase_admin
+
+
+def _parse_iso_utc(ts_str: str) -> datetime.datetime:
+    """Parses PostgreSQL ISO-8601 timestamps safely on Python 3.10 (pads 1-5 digit fractional seconds)."""
+    ts = str(ts_str).strip().replace("Z", "+00:00")
+    ts = re.sub(r"\.(\d+)", lambda m: "." + m.group(1).ljust(6, "0")[:6], ts)
+    dt = datetime.datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
 
 
 def register_device(
@@ -150,11 +161,7 @@ def enforce_heartbeat_timeouts(timeout_seconds: float = 10.0):
             if not last_seen_str:
                 continue
             try:
-                # Parse ISO timestamp robustly
-                ts = last_seen_str.replace("Z", "+00:00")
-                last_dt = datetime.datetime.fromisoformat(ts)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
+                last_dt = _parse_iso_utc(last_seen_str)
                 age = (now_utc - last_dt).total_seconds()
                 if age > float(timeout_seconds):
                     # Mark offline without modifying last_seen_at so user sees exact last heartbeat time
