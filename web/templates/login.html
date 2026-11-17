@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div style="max-width: 480px; margin: 40px auto;">
+    <div class="card">
+        <div class="card-header" style="text-align: center; font-size: 1.15rem; font-weight: 600;">
+            <i class="fa-solid fa-shield-halved" style="color: #2563eb; margin-right: 8px;"></i>
+            LabNet Authentication Portal
+        </div>
+        <div class="card-body" style="padding: 24px;">
+            <!-- Tabs: Login vs Register -->
+            <div style="display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 20px;">
+                <button id="tab-login-btn" onclick="showAuthTab('login')" style="flex: 1; padding: 10px; border: none; background: none; font-weight: 600; color: #2563eb; border-bottom: 2px solid #2563eb; cursor: pointer;">
+                    <i class="fa-solid fa-right-to-bracket"></i> Sign In
+                </button>
+                <button id="tab-register-btn" onclick="showAuthTab('register')" style="flex: 1; padding: 10px; border: none; background: none; font-weight: 600; color: #64748b; cursor: pointer;">
+                    <i class="fa-solid fa-user-plus"></i> Register
+                </button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="login-form" onsubmit="handleAuthSubmit(event, 'login')">
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Institutional Email</label>
+                    <input type="email" id="login-email" class="form-input" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px;" placeholder="student@labnet.local" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Password</label>
+                    <input type="password" id="login-password" class="form-input" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px;" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">
+                    Authenticate Session
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="register-form" onsubmit="handleAuthSubmit(event, 'register')" style="display: none;">
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Full Name / Display Name</label>
+                    <input type="text" id="reg-name" class="form-input" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px;" placeholder="Alex Mercer" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Institutional Email</label>
+                    <input type="email" id="reg-email" class="form-input" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px;" placeholder="student@labnet.local" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Role</label>
+                    <select id="reg-role" class="form-select" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px; background: #fff;">
+                        <option value="student">Student Workstation</option>
+                        <option value="admin">Lab Administrator</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; color: #334155;">Password</label>
+                    <input type="password" id="reg-password" class="form-input" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px;" placeholder="At least 6 characters" minlength="6" required>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer;">
+                    Create LabNet Account
+                </button>
+            </form>
+
+            <div id="auth-alert" style="display: none; margin-top: 16px; padding: 10px; border-radius: 4px; font-size: 0.85rem;"></div>
+
+            <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 0.8rem; color: #64748b; text-align: center;">
+                Supabase Auth & Database Layer • LabNet VMware Subnet 192.168.66.0/24
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showAuthTab(tab) {
+    const loginForm = document.getElementById('login-form');
+    const regForm = document.getElementById('register-form');
+    const tabLogin = document.getElementById('tab-login-btn');
+    const tabReg = document.getElementById('tab-register-btn');
+    const alertBox = document.getElementById('auth-alert');
+    alertBox.style.display = 'none';
+
+    if (tab === 'login') {
+        loginForm.style.display = 'block';
+        regForm.style.display = 'none';
+        tabLogin.style.color = '#2563eb';
+        tabLogin.style.borderBottom = '2px solid #2563eb';
+        tabReg.style.color = '#64748b';
+        tabReg.style.borderBottom = 'none';
+    } else {
+        loginForm.style.display = 'none';
+        regForm.style.display = 'block';
+        tabReg.style.color = '#2563eb';
+        tabReg.style.borderBottom = '2px solid #2563eb';
+        tabLogin.style.color = '#64748b';
+        tabLogin.style.borderBottom = 'none';
+    }
+}
+
+async function handleAuthSubmit(e, action) {
+    e.preventDefault();
+    const alertBox = document.getElementById('auth-alert');
+    alertBox.style.display = 'none';
+
+    let endpoint = action === 'login' ? '/api/auth/login' : '/api/auth/register';
+    let payload = {};
+
+    if (action === 'login') {
+        payload = {
+            email: document.getElementById('login-email').value,
+            password: document.getElementById('login-password').value
+        };
+    } else {
+        payload = {
+            display_name: document.getElementById('reg-name').value,
+            email: document.getElementById('reg-email').value,
+            role: document.getElementById('reg-role').value,
+            password: document.getElementById('reg-password').value
+        };
+    }
+
+    try {
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            alertBox.style.display = 'block';
+            alertBox.style.background = '#dcfce7';
+            alertBox.style.color = '#15803d';
+            alertBox.innerText = action === 'login' ? 'Authentication successful! Redirecting...' : 'Account created successfully! Redirecting...';
+            setTimeout(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const nextUrl = urlParams.get('next') || '/';
+                window.location.href = nextUrl;
+            }, 800);
+        } else {
+            alertBox.style.display = 'block';
+            alertBox.style.background = '#fee2e2';
+            alertBox.style.color = '#b91c1c';
+            alertBox.innerText = data.error || 'Authentication failed. Please verify credentials.';
+        }
+    } catch (err) {
+        alertBox.style.display = 'block';
+        alertBox.style.background = '#fee2e2';
+        alertBox.style.color = '#b91c1c';
+        alertBox.innerText = 'Network error: ' + err.message;
+    }
+}
+</script>
+{% endblock %}
