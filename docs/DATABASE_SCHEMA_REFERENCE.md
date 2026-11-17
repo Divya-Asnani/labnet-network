@@ -59,6 +59,14 @@ Persists chat messages exchanged over raw TCP (:5001) or UDP broadcast.
   - Constraint: `CHECK (status IN ('sent', 'delivered', 'failed'))`
 - **`sent_at`** (`timestamptz`, DEFAULT `now()`): Dispatch timestamp.
 
+> **Schema Limitation & Optional Future Migration (Not Applied Automatically):**
+> The current `chat_messages` schema models a shared broadcast channel (matching the TCP broadcast server on port 5001) and does not contain a `recipient_user_id` or `conversation_id` column. LabNet preserves this schema untouched and supports participant-filtered history views alongside the shared General Lab Channel. If strict private 1-to-1 direct messaging is required in a future release, the minimal migration would be:
+> ```sql
+> ALTER TABLE public.chat_messages
+>   ADD COLUMN recipient_user_id uuid REFERENCES public.profiles(id) NULL;
+> CREATE INDEX idx_chat_messages_recipient ON public.chat_messages (recipient_user_id, sent_at DESC);
+> ```
+
 ---
 
 ### 2.4 Table: `file_transfers`

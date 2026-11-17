@@ -1,153 +1,113 @@
-# LabNet Comprehensive Testing & Verification Guide
+# LabNet Comprehensive Testing & Examiner Demonstration Guide
 
-This guide provides end-to-end instructions for running, testing, and capturing packet evidence for all phases of **LabNet** across local and multi-VM environments.
+This guide separates **Unit/Security Tests**, **Local Integration Tests**, **Cross-VM Tests**, and the **19-Step Examiner Demonstration Sequence**.
 
 ---
 
-## 1. Quick Automated Test Suites
+## 1. Test Categories & Automated Suites
 
-### 1.1 Run Phase 1 & 2 Tests (TCP Chat & TCP File)
+### 1.1 Automated Security, Persistence & Protocol Validation Suite
 ```bash
+cd ~/Desktop/CNT_CP/labnet-network
 source .venv/bin/activate
-python test/test_phase1_phase2.py
+python test/test_final_validation.py
 ```
+Covers:
+- **Unit & Security:** Protected route redirects (`302`), unauthenticated API rejection (`401`), RBAC enforcement (`403` for students on admin routes), privilege-escalation prevention on public signup, path traversal rejection (`400/404`), shell-injection rejection on diagnostics, zero Lucide icon verification.
+- **Local Socket Integration:** TCP Chat (`:5001`), Chunked TCP File (`:2121`), Reliable Sliding-Window ARQ UDP (`:2122` clean + 15% controlled packet loss), Direct P2P (`:2123`), UDP Heartbeat (`:6000` / isolated test port) with online $\rightarrow$ timeout offline $\rightarrow$ recovery.
+- **Real Supabase Persistence:** Registers a controlled synthetic account, verifies trigger-created `profiles`, `devices`, `heartbeat_logs`, `chat_messages`, `file_transfers`, `network_sessions`, and `network_events`, then cleans up synthetic test rows.
 
-### 1.2 Run Phase 3, 4 & 5 Tests (UDP, P2P, Services, Auth, Persistence)
+### 1.2 Core Socket Integration Suites
 ```bash
-source .venv/bin/activate
+python test/test_phase1_phase2.py
 python test/test_phase3_phase4_phase5.py
 ```
+> **Important Distinction:** Localhost integration tests validate protocol correctness on VM1, but are **not** a substitute for true cross-VM tests over the VMware virtual LAN (`192.168.66.0/24`).
 
 ---
 
-## 2. Starting Core Services on VM1 (Server: `192.168.66.128`)
+## 2. Exact Service Startup Commands (VM1 — `192.168.66.128`)
 
-In separate terminal tabs or multiplexer windows (`tmux`/`screen`):
+Always activate `.venv` so every daemon loads `supabase` and `.env` properly:
 
 ```bash
+cd ~/Desktop/CNT_CP/labnet-network
 source .venv/bin/activate
 
-# Tab 1: TCP Broadcast Chat Server (Port 5001)
+# Tab 1: Multithreaded TCP Chat Server (:5001)
 python server/tcp_chat_server.py
 
-# Tab 2: TCP Chunked File Server (Port 2121)
+# Tab 2: Chunked TCP File Transfer Server (:2121)
 python server/tcp_file_server.py
 
-# Tab 3: Reliable Sliding-Window UDP File Server (Port 2122)
+# Tab 3: Reliable Sliding-Window ARQ UDP File Server (:2122)
 python server/udp_file_server.py
 
-# Tab 4: UDP Heartbeat & Presence Server (Port 6000)
+# Tab 4: UDP Heartbeat & Presence Server (:6000)
 python server/udp_server.py
 
-# Tab 5: LabNet Web Portal & Service Gateway (Port 5050)
+# Tab 5: Flask Portal + Socket.IO + Local SMTP (:1025) & POP3 (:1100) (:5050)
 python web/app.py
 ```
 
 ---
 
-## 3. Cross-VM Testing from VM2 (`192.168.66.130`)
+## 3. Exact Client Setup Commands (VM2 — Verify IP via `ip -br addr`)
 
-### 3.1 UDP Heartbeat, Latency & Offline Timeout Detection
-Run the heartbeat client on VM2:
 ```bash
-# Sends heartbeats every 2s; simulates 3 missed heartbeats after packet #3 to trigger offline detection
-python clients/heartbeat_client.py --server 192.168.66.128 --port 6000 --id "Student-VM2" --interval 2 --simulate-missed 3
+cd ~/Desktop/CNT_CP/labnet-network
+git pull origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+ip -br addr   # Verify current VM2 IP on 192.168.66.0/24
 ```
-**Expected Observation:**
-- Packets 1–3 receive immediate `HEARTBEAT_ACK` with RTT latency.
-- Client pauses for 8 seconds. VM1 console prints: `[OFFLINE] Student-VM2 (192.168.66.130) - Timeout exceeded (10.0s)`.
-- Client resumes sending heartbeats. VM1 console prints: `[HEARTBEAT] Student-VM2 (192.168.66.130) is ONLINE`.
-
-### 3.2 Reliable UDP File Transfer (Port 2122)
-Create a test file on VM2 and stream it over UDP to VM1:
-```bash
-dd if=/dev/urandom of=research_data.bin bs=1M count=1
-
-# Clean transfer
-python clients/udp_file_client.py research_data.bin --server 192.168.66.128 --port 2122
-
-# Transfer with 20% simulated packet loss to test sliding-window ARQ retransmissions
-python clients/udp_file_client.py research_data.bin --server 192.168.66.128 --port 2122 --loss-rate 0.20
-```
-**Expected Observation:**
-- With packet loss, dropped chunks trigger timeout detection.
-- Retransmission counters increment in the live progress bar.
-- Upon completion, the server reassembles all chunks sequentially and validates the SHA-256 hash.
-
-### 3.3 Direct Peer-to-Peer (P2P) File Transfer (VM2 -> VM3)
-To prove genuine P2P functionality without routing file payloads through the central server:
-1. **On VM3 (`192.168.66.131`):** Start the P2P listener daemon:
-   ```bash
-   python clients/p2p_node.py --listen --port 2123 --name "VM3-Workstation" --dir p2p_received
-   ```
-2. **On VM2 (`192.168.66.130`):** Transmit directly to VM3:
-   ```bash
-   dd if=/dev/urandom of=direct_payload.dat bs=1M count=2
-   python clients/p2p_node.py --send direct_payload.dat --target-ip 192.168.66.131 --target-port 2123
-   ```
-3. **Verification:** Inspect network traffic on VM1 during transfer using `sudo tcpdump -i any host 192.168.66.131 and port 2123`. VM1 sees **zero** payload packets because the stream flows exclusively between VM2 and VM3!
-
-### 3.4 Remote File Download & Verification
-1. Download a stored file from the server's repository:
-   ```bash
-   curl -O http://192.168.66.128:5050/api/files/download/research_data.bin
-   ```
-2. Compare the SHA-256 hash of the downloaded file with the original:
-   ```bash
-   sha256sum research_data.bin
-   ```
 
 ---
 
-## 4. Web Portal Verification & Testing
+## 4. Final Examiner Demonstration Sequence (19 Steps)
 
-Open a web browser on VM1 or VM2 and navigate to `http://192.168.66.128:5050`.
-
-### 4.1 Authentication (Supabase Auth)
-1. Click **Sign In** in the top navigation bar.
-2. Switch to **Register** tab: enter display name, email (e.g., `student@labnet.local`), role (`Student Workstation`), and password.
-3. Authenticate session. The top navigation bar now displays your user name and role badge.
-
-### 4.2 File Transfer Portal (`/files`)
-1. Select a file from disk.
-2. Select **Transport Protocol**:
-   - Choose `[ TCP ]` for Port 2121 stream.
-   - Choose `[ UDP ]` for Port 2122 sliding-window ARQ stream.
-3. Click **Start Transfer**. Observe the real-time byte counter, ASCII pipeline animation, throughput calculation, and SHA-256 verification receipt.
-4. Scroll to **Server File Repository**: verify your uploaded file appears in the table with its size and checksum. Click **Download** to retrieve it back.
-
-### 4.3 Network Services & Diagnostics (`/network`)
-1. **Live Workstations Table:** Verify registered VM nodes display real-time status (`ONLINE`/`OFFLINE`) and heartbeat timestamps.
-2. **System Diagnostics:** Click `PING`, `TRACEROUTE`, `ROUTING TABLE`, `INTERFACES`, `LISTENING SOCKETS` to inspect live kernel networking data.
-3. **DNS Service:** Enter a hostname (e.g. `localhost`) and click **Resolve DNS Query** to benchmark lookup duration.
-4. **SMTP Mail Service:** Click **Send Notification via SMTP** to queue an alert on port 1025.
-5. **POP3 Mail Service:** Click **Fetch Inbox via POP3** to retrieve queued alerts on port 1100.
+| Step | Open / Location | Command or Action | Expected Output | Networking Concept Demonstrated |
+| :---: | :--- | :--- | :--- | :--- |
+| **1** | Browser on VM1 (`http://192.168.66.128:5050/login`) | Sign in with provisioned Admin account (or register a Student account & observe password eye toggle) | Redirects to `/` with user role badge; invalid passwords display explicit error | Supabase Auth, session cookies, RBAC |
+| **2** | Browser on VM1 (`/`) | View Administrator Overview Dashboard | Displays real KPI counts from Supabase (`devices`, `chat_messages`, `file_transfers`, `network_sessions`) & passive service port states | Application-layer telemetry & passive kernel inspection |
+| **3** | Browser on VM1 (`/monitoring`) | Open Devices & Network Monitoring | Shows registered devices table with search/filter & zero hardcoded fake online nodes | Centralized presence monitoring |
+| **4** | Terminal on VM2 | `python clients/heartbeat_client.py --server 192.168.66.128 --port 6000 --id VM2-Workstation --interval 2` | VM2 prints `ACK received [RTT: ~1.x ms]` every 2 seconds | Connectionless UDP datagrams (`SOCK_DGRAM`) |
+| **5** | Browser on VM1 (`/monitoring`) | Observe `VM2-Workstation` in devices table & heartbeat log | Status shows `ONLINE` with real IP, timestamp, and measured latency | Heartbeat liveness protocol |
+| **6** | Browsers on VM1 & VM2 (`/chat`) | Send messages from both VMs | Messages appear instantaneously in Dribbble 3-panel UI with zero connect/disconnect spam | Multithreaded TCP broadcast (`:5001`) + WebSocket bridge |
+| **7** | Terminal on VM2 | Press `Ctrl+C` to stop `heartbeat_client.py` and wait > 10 seconds | VM1 marks `VM2-Workstation` `OFFLINE` and records a `timeout` event in `network_events` | Timeout-based failure detection |
+| **8** | Browser on VM1 (`/chat`) + VM2 | Send a message on VM1 while VM2 browser is closed; reopen `/chat` on VM2 | VM2 loads full chronological history from Supabase `chat_messages` including the missed message | Separation of live TCP transport vs durable DB persistence |
+| **9** | Browser on VM2 (`/files`) | Select **TCP Stream (:2121)**, choose a file, click Transmit | Streams 64 KB chunks with live progress bar, throughput (KB/s), and `VERIFIED (SHA-256 MATCH)` | Reliable connection-oriented TCP byte stream |
+| **10** | Browser on VM2 (`/files`) | Select **Reliable UDP (:2122)**, choose a file, click Transmit | Splits into 1024 B sequenced datagrams with selective ACKs and `VERIFIED (SHA-256 MATCH)` | Application-layer reliability over UDP (Sliding-Window ARQ) |
+| **11** | Terminal on VM2 | `python clients/udp_file_client.py sample.bin --server 192.168.66.128 --port 2122 --loss-rate 0.20` | Prints dropped chunks, timeout retransmissions, and final `SHA-256 MATCH` | Packet loss recovery & ARQ retransmission |
+| **12** | Terminals on VM2 & VM3 (or 2nd node) | Receiver: `python clients/p2p_node.py --listen --port 2123`<br>Sender: `python clients/p2p_node.py --send sample.bin --target-ip <peer-ip> --target-port 2123` | Peer receives file directly with `SHA-256 MATCH`; `tcpdump` on VM1 shows zero payload packets | Direct Peer-to-Peer mesh bypassing central server |
+| **13** | Browser on VM2 (`/repository`) | Click **Download** on an uploaded file, then run `sha256sum ~/Downloads/<file>` | File downloads securely (authenticated) and local SHA-256 equals repository checksum | Authenticated HTTP file retrieval & path-traversal protection |
+| **14** | Browser on VM1 (`/diagnostics`) | Enter `localhost` or `google.com`, select `A`, click **Run Live DNS Lookup** | Displays upstream resolver IP, resolved addresses, and latency in ms | Domain Name System (DNS) resolution |
+| **15** | Browser on VM1 (`/diagnostics`) | Click **Send Test Email to Local Spool (:1025)** | Console displays `EHLO → MAIL FROM → RCPT TO → DATA → 250 OK → QUIT` | RFC 5321 SMTP push mail protocol |
+| **16** | Browser on VM1 (`/diagnostics`) | Click **Refresh Mailbox** and select message in POP3 panel (`:1100`) | Console displays `USER → PASS → STAT → LIST → RETR → QUIT` and full email text | RFC 1939 POP3 pull mail retrieval |
+| **17** | Browser on VM1 (`/diagnostics`) | Click **Ping**, **Traceroute**, **Routing Table**, **Interfaces**, **Listening Sockets** | Shows exact command, exit code, execution time, and live Linux kernel output | ICMP (Layer 3), IP routing, OS socket state |
+| **18** | Supabase Dashboard / `/activity` | Inspect all 7 tables (`profiles`, `devices`, `chat_messages`, `file_transfers`, `heartbeat_logs`, `network_sessions`, `network_events`) | Live rows match every executed action | Full-stack relational persistence & RLS |
+| **19** | Terminal on VM1 | Run `tcpdump` capture commands below during steps 6, 9, 10, 12 | Shows real TCP 3-way handshake (`[S]`, `[S.]`, `[.]`), UDP datagrams, ACKs, and teardown | Wire-level packet inspection |
 
 ---
 
-## 5. Packet Capture Evidence with tcpdump
-
-Run `tcpdump` commands to capture genuine packet traces on the wire:
+## 5. Packet Capture Commands (`tcpdump`)
 
 ```bash
-# 1. Capture TCP Chat Packets (Port 5001)
+# TCP Broadcast Chat (:5001) — observe SYN/SYN-ACK/ACK and JSON PSH frames
 sudo tcpdump -i any port 5001 -nn -v -X
 
-# 2. Capture TCP File Transfer Segments (Port 2121)
+# TCP File Transfer (:2121) — observe 64 KB segmented stream
 sudo tcpdump -i any port 2121 -nn -v
 
-# 3. Capture Reliable UDP File Datagrams (Port 2122)
+# Reliable UDP File Transfer (:2122) — observe sequenced DATA & ACK datagrams
 sudo tcpdump -i any port 2122 -nn -v
 
-# 4. Capture Direct P2P Traffic (Port 2123)
+# Direct P2P Transfer (:2123) — verify packets flow directly between peers, NOT VM1
 sudo tcpdump -i any port 2123 -nn -v
 
-# 5. Capture Periodic UDP Heartbeats (Port 6000)
+# UDP Heartbeat Datagrams (:6000) — observe HEARTBEAT & HEARTBEAT_ACK
 sudo tcpdump -i any port 6000 -nn -v -X
 
-# 6. Capture Local SMTP Email Transmission (Port 1025)
-sudo tcpdump -i any port 1025 -nn -v -X
-
-# 7. Capture Local POP3 Retrieval (Port 1100)
-sudo tcpdump -i any port 1100 -nn -v -X
+# Local SMTP (:1025) & POP3 (:1100)
+sudo tcpdump -i any port 1025 or port 1100 -nn -v -X
 ```
