@@ -202,22 +202,32 @@ def run_all():
         print("[PASS] 2.8 Promoted admin accesses /activity (200) and /api/admin/users (200).")
 
         # ------------------------------------------------------------------
-        # SUITE 3: PERSISTENT TCP CHAT & OFFLINE HISTORY RETRIEVAL
+        # SUITE 3: PERSISTENT PRIVATE TCP CHAT & OFFLINE HISTORY RETRIEVAL
         # ------------------------------------------------------------------
-        print("\n--- SUITE 3: PERSISTENT TCP CHAT & HISTORY ---")
+        print("\n--- SUITE 3: PERSISTENT PRIVATE TCP CHAT & HISTORY ---")
+        peer_contacts = client.get("/api/chat/conversations").get_json().get("contacts", [])
+        assert len(peer_contacts) >= 1, "At least one other user profile is required to create a direct chat."
+        target_peer_id = peer_contacts[0]["user_id"]
+        r_conv = client.post("/api/chat/conversations/direct", json={"recipient_user_id": target_peer_id})
+        assert r_conv.status_code == 200, f"Direct conversation creation failed: {r_conv.data}"
+        test_conv_id = r_conv.get_json()["conversation"]["id"]
+
         t_chat0 = time.time()
-        r_chat = client.post("/api/chat/send", json={"message": f"LabNet persistence audit message {rand_tag}"})
+        r_chat = client.post(
+            f"/api/chat/conversations/{test_conv_id}/messages",
+            json={"message": f"LabNet persistence audit message {rand_tag}"}
+        )
         chat_ms = round((time.time() - t_chat0) * 1000.0, 2)
         assert r_chat.status_code == 200, f"Chat send failed: {r_chat.status_code} {r_chat.data}"
         sent_msg = r_chat.get_json()["message"]
         BENCHMARKS["chat_persist_and_tcp_ms"] = chat_ms
 
-        # Fetch persistent history from Supabase as if VM2 reconnected later
-        r_hist = client.get("/api/chat/history?limit=20")
+        # Fetch persistent history strictly for this conversation
+        r_hist = client.get(f"/api/chat/conversations/{test_conv_id}/messages?limit=20")
         assert r_hist.status_code == 200
         hist_msgs = r_hist.get_json()["messages"]
         assert any(m["id"] == sent_msg["id"] and rand_tag in m["text"] for m in hist_msgs), "Message not retrieved from Supabase history!"
-        print(f"[PASS] 3.1 Chat persisted to Supabase `chat_messages` and dispatched via TCP :5001 ({chat_ms} ms).")
+        print(f"[PASS] 3.1 Private conversation message persisted to Supabase `chat_messages` and dispatched via TCP :5001 ({chat_ms} ms).")
 
         # ------------------------------------------------------------------
         # SUITE 4: TCP FILE (:2121), RELIABLE UDP ARQ (:2122), P2P (:2123) & DOWNLOAD

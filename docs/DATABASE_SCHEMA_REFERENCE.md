@@ -47,25 +47,38 @@ Tracks network workstations, servers, and nodes active on LabNet.
 
 ---
 
-### 2.3 Table: `chat_messages`
-Persists chat messages exchanged over raw TCP (:5001) or UDP broadcast.
+### 2.3 Table: `chat_messages` (Updated in Migration 001)
+Persists private conversation messages exchanged over raw TCP (`:5001`) and isolated Socket.IO rooms (`conversation:<id>`).
 - **`id`** (`uuid`, Primary Key, DEFAULT `gen_random_uuid()`): Unique message identifier.
+- **`conversation_id`** (`uuid`, NULLABLE Foreign Key to `conversations.id` `ON DELETE CASCADE`): Associates the message strictly with one conversation.
 - **`sender_user_id`** (`uuid`, NOT NULL): Foreign Key to `profiles.id`.
 - **`sender_device_id`** (`uuid`, NULLABLE): Foreign Key to `devices.id`.
 - **`message`** (`text`, NOT NULL): Message payload text.
-- **`protocol`** (`text`, NOT NULL): Transport protocol used.
-  - Constraint: `CHECK (protocol IN ('TCP', 'UDP'))`
-- **`status`** (`text`, NOT NULL): Delivery state.
-  - Constraint: `CHECK (status IN ('sent', 'delivered', 'failed'))`
+- **`protocol`** (`text`, NOT NULL): Transport protocol (`CHECK (protocol IN ('TCP', 'UDP'))`).
+- **`status`** (`text`, NOT NULL): Delivery state (`CHECK (status IN ('sent', 'delivered', 'failed'))`).
 - **`sent_at`** (`timestamptz`, DEFAULT `now()`): Dispatch timestamp.
 
-> **Schema Limitation & Optional Future Migration (Not Applied Automatically):**
-> The current `chat_messages` schema models a shared broadcast channel (matching the TCP broadcast server on port 5001) and does not contain a `recipient_user_id` or `conversation_id` column. LabNet preserves this schema untouched and supports participant-filtered history views alongside the shared General Lab Channel. If strict private 1-to-1 direct messaging is required in a future release, the minimal migration would be:
-> ```sql
-> ALTER TABLE public.chat_messages
->   ADD COLUMN recipient_user_id uuid REFERENCES public.profiles(id) NULL;
-> CREATE INDEX idx_chat_messages_recipient ON public.chat_messages (recipient_user_id, sent_at DESC);
-> ```
+> **Legacy Unassigned Messages Strategy:** Any pre-migration rows retain `conversation_id = NULL`, are never deleted, are never assigned to arbitrary conversations, and are strictly excluded from user reads via both backend queries and PostgreSQL RLS (`conversation_id IS NOT NULL AND is_conversation_member(conversation_id, auth.uid())`).
+
+---
+
+### 2.3b Table: `conversations` (Added in Migration 001)
+Represents isolated private (`direct`) or `group` chat threads.
+- **`id`** (`uuid`, Primary Key, DEFAULT `gen_random_uuid()`).
+- **`type`** (`text`, NOT NULL, DEFAULT `'direct'`): `CHECK (type IN ('direct', 'group'))`.
+- **`direct_key`** (`text`, NULLABLE): Canonical sorted pair `LEAST(user_a, user_b) || ':' || GREATEST(user_a, user_b)` protected by a partial unique index (`WHERE type = 'direct' AND direct_key IS NOT NULL`) to guarantee zero duplicate direct conversations.
+- **`title`** (`text`, NULLABLE): Optional label for group conversations.
+- **`created_at`** (`timestamptz`, NOT NULL, DEFAULT `now()`).
+
+---
+
+### 2.3c Table: `conversation_participants` (Added in Migration 001)
+Authoritative membership table enforcing who can read or send messages in a conversation.
+- **`conversation_id`** (`uuid`, NOT NULL, FK to `conversations.id` `ON DELETE CASCADE`).
+- **`user_id`** (`uuid`, NOT NULL, FK to `profiles.id` `ON DELETE CASCADE`).
+- **`joined_at`** (`timestamptz`, NOT NULL, DEFAULT `now()`).
+- **Composite Primary Key:** `(conversation_id, user_id)`.
+- **RLS Helper:** `public.is_conversation_member(conv_id uuid, uid uuid)` (`SECURITY DEFINER`) prevents recursive RLS evaluation while enforcing strict participant isolation across `conversations`, `conversation_participants`, and `chat_messages`.
 
 ---
 

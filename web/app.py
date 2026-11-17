@@ -8,7 +8,7 @@ from flask import (
     Flask, render_template, request, jsonify,
     session, redirect, url_for, send_from_directory
 )
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room, leave_room, rooms
 from dotenv import dotenv_values
 
 # Services
@@ -32,8 +32,17 @@ from clients.p2p_node import send_direct_p2p
 # Database Repositories
 from web.database.repositories.profile_repository import list_profiles, update_profile
 from web.database.repositories.device_repository import register_device, get_device_by_ip
+from web.database.repositories.conversation_repository import (
+    is_user_participant,
+    get_or_create_direct_conversation,
+    get_conversation_detail,
+    get_conversation_participants,
+    list_user_conversations,
+    list_available_contacts
+)
 from web.database.repositories.chat_repository import (
-    record_chat_message, update_chat_message_status, list_recent_messages, count_messages
+    record_chat_message, update_chat_message_status,
+    list_conversation_messages, count_messages
 )
 from web.database.repositories.file_repository import (
     record_file_transfer, update_transfer_status, get_transfer_by_id,
@@ -69,20 +78,43 @@ except Exception as e:
     print(f"[*] Note on local mail test servers: {e}")
 
 
-# Bridge TCP Chat broadcasts to WebSocket clients cleanly
+# Bridge TCP Chat frames strictly to authorized conversation Socket.IO rooms
+# SECURITY: Private chat messages are NEVER emitted globally to all clients.
 def on_tcp_chat_broadcast(message_obj):
     with app.app_context():
         msg_type = message_obj.get("type", "chat")
         if msg_type in ("presence", "system"):
-            # Keep connection/presence notifications strictly separated from chat messages
             socketio.emit("presence_update", {
                 "event": message_obj.get("event", "info"),
                 "active_clients": message_obj.get("active_clients"),
                 "timestamp": message_obj.get("timestamp"),
                 "text": message_obj.get("text", "")
             })
-        else:
-            socketio.emit("chat_broadcast", message_obj)
+            return
+
+        conv_id = message_obj.get("conversation_id")
+        sender_uid = message_obj.get("sender_user_id")
+        if not conv_id:
+            # Drop any chat frame missing a valid conversation_id (no global broadcast)
+            return
+
+        # Re-verify sender membership before emitting to room
+        if sender_uid and not is_user_participant(conv_id, sender_uid):
+            return
+
+        room_name = f"conversation:{conv_id}"
+        socketio.emit("chat_message", message_obj, to=room_name)
+
+        # Notify ONLY authorized participants' personal sidebar rooms for preview/unread updates
+        participant_ids = message_obj.get("participant_ids") or []
+        for pid in participant_ids:
+            socketio.emit("conversation_updated", {
+                "conversation_id": conv_id,
+                "sender_user_id": sender_uid,
+                "sender": message_obj.get("sender", ""),
+                "last_message": message_obj.get("text", ""),
+                "timestamp": message_obj.get("timestamp", "")
+            }, to=f"user:{pid}")
 
 
 chat_bridge.add_message_callback(on_tcp_chat_broadcast)
@@ -93,10 +125,10 @@ def _format_chat_row(row: dict) -> dict:
     prof = row.get("profiles") or {}
     dev = row.get("devices") or {}
     sent_at = row.get("sent_at") or ""
-    # Display-friendly HH:MM / YYYY-MM-DD HH:MM:SS
     readable = sent_at.replace("T", " ")[:19] if sent_at else ""
     return {
         "id": row.get("id"),
+        "conversation_id": row.get("conversation_id"),
         "type": "chat",
         "sender_user_id": row.get("sender_user_id"),
         "sender": prof.get("display_name") or "LabNet User",
@@ -390,116 +422,37 @@ def api_admin_users():
 
 
 # ============================================================================
-# Persistent + Real-Time TCP Chat APIs
+# Private Conversation & Persistent TCP Chat APIs (Strict Isolation)
 # ============================================================================
 
-@app.route("/api/chat/history", methods=["GET"])
-@login_required
-def api_chat_history():
+def _send_conversation_message_core(user: dict, conversation_id: str, message_text: str, client_ip: str):
     """
-    Loads persistent conversation history from Supabase `chat_messages` in
-    chronological order with cursor-based pagination (`before`).
+    Shared core for REST and Socket.IO message transmission:
+    1. Strictly verifies participant membership in `conversation_id`.
+    2. Persists message in Supabase `chat_messages` with `conversation_id`.
+    3. Dispatches canonical frame (including `conversation_id` and `participant_ids`)
+       over raw TCP socket (:5001).
+    4. Updates delivery state (`delivered` vs `failed`).
     """
-    limit = min(max(int(request.args.get("limit", 50)), 1), 200)
-    before_iso = request.args.get("before") or None
-    sender_filter = request.args.get("sender_user_id") or None
-
-    rows = list_recent_messages(limit=limit, before_iso=before_iso, sender_user_id=sender_filter)
-    formatted = [_format_chat_row(r) for r in rows]
-    has_more = len(rows) == limit
-    oldest_cursor = formatted[0]["sent_at"] if formatted else None
-
-    return jsonify({
-        "messages": formatted,
-        "has_more": has_more,
-        "oldest_cursor": oldest_cursor,
-        "total_count": count_messages(),
-        "tcp_bridge_connected": chat_bridge.connected
-    })
-
-
-@app.route("/api/chat/conversations", methods=["GET"])
-@login_required
-def api_chat_conversations():
-    """
-    Builds conversation sidebar list from real Supabase data:
-    - General Lab Channel (all broadcast messages in `chat_messages`)
-    - Registered lab participants from `profiles` + live online status from `devices`
-    """
-    latest_rows = list_recent_messages(limit=50)
-    last_msg = _format_chat_row(latest_rows[-1]) if latest_rows else None
-    total = count_messages()
-
-    profiles = list_profiles()
-    devices = get_network_status()
-    online_by_user = {}
-    ip_by_user = {}
-    for d in devices:
-        uname = d.get("user_name")
-        if d.get("status") == "ONLINE":
-            online_by_user[uname] = True
-        if uname and d.get("ip"):
-            ip_by_user[uname] = d.get("ip")
-
-    conversations = [
-        {
-            "id": "general",
-            "title": "LabNet General Channel",
-            "subtitle": "Multithreaded TCP Broadcast (:5001)",
-            "type": "channel",
-            "online": chat_bridge.connected,
-            "last_message": last_msg["text"] if last_msg else "No messages yet. Start the conversation.",
-            "last_sender": last_msg["sender"] if last_msg else "",
-            "last_timestamp": last_msg["timestamp"] if last_msg else "",
-            "message_count": total
-        }
-    ]
-
-    # Add participant filter views backed by real `profiles`
-    for p in profiles:
-        pid = p.get("id")
-        pname = p.get("display_name") or "User"
-        p_msgs = [r for r in latest_rows if r.get("sender_user_id") == pid]
-        p_last = _format_chat_row(p_msgs[-1]) if p_msgs else None
-        conversations.append({
-            "id": pid,
-            "title": pname,
-            "subtitle": f"{(p.get('role') or 'student').capitalize()} • {ip_by_user.get(pname, 'Workstation')}",
-            "type": "participant",
-            "role": p.get("role") or "student",
-            "online": bool(online_by_user.get(pname, False)),
-            "last_message": p_last["text"] if p_last else "No messages from this user yet",
-            "last_sender": pname,
-            "last_timestamp": p_last["timestamp"] if p_last else "",
-            "message_count": len(p_msgs)
-        })
-
-    return jsonify({"conversations": conversations, "tcp_bridge_connected": chat_bridge.connected})
-
-
-@app.route("/api/chat/send", methods=["POST"])
-@login_required
-def api_chat_send():
-    """
-    HTTP POST chat endpoint. Persists message to Supabase `chat_messages` FIRST
-    using the authenticated session user (preventing impersonation), then
-    transmits over raw TCP socket (:5001) and updates delivery status.
-    """
-    user = session["user"]
-    data = request.json or {}
-    message_text = (data.get("message") or data.get("text") or "").strip()
-
+    if not conversation_id:
+        return False, {"code": "missing_conversation", "error": "conversation_id is required."}, 400
     if not message_text:
-        return jsonify({"error": "Message cannot be empty"}), 400
+        return False, {"code": "empty_message", "error": "Message cannot be empty."}, 400
     if len(message_text) > 4000:
-        return jsonify({"error": "Message exceeds maximum length (4000 characters)"}), 400
+        return False, {"code": "too_long", "error": "Message exceeds maximum length (4000 characters)."}, 400
 
-    client_ip = request.remote_addr or "127.0.0.1"
+    # Mandatory participant authorization check (never trust frontend conversation_id)
+    ok_parts, participants, status_p = get_conversation_participants(conversation_id, user["id"])
+    if not ok_parts:
+        return False, {"code": "forbidden", "error": participants}, status_p
+
+    participant_ids = [p["user_id"] for p in participants]
     dev = get_device_by_ip(client_ip)
     dev_id = dev["id"] if dev else None
 
     msg_id = str(uuid.uuid4())
-    ok_db, db_row = record_chat_message(
+    ok_db, db_row, status_db = record_chat_message(
+        conversation_id=conversation_id,
         sender_user_id=user["id"],
         message=message_text,
         protocol="TCP",
@@ -508,13 +461,15 @@ def api_chat_send():
         message_id=msg_id
     )
     if not ok_db:
-        return jsonify({"status": "error", "error": f"Database persistence failed: {db_row}"}), 500
+        return False, {"code": "db_error", "error": f"Database persistence failed: {db_row}"}, status_db
 
     sent_at = db_row.get("sent_at") if isinstance(db_row, dict) else datetime.datetime.now(datetime.timezone.utc).isoformat()
     timestamp = sent_at.replace("T", " ")[:19]
 
     frame = {
         "id": msg_id,
+        "conversation_id": str(conversation_id),
+        "participant_ids": participant_ids,
         "type": "chat",
         "sender_user_id": user["id"],
         "sender": user["display_name"],
@@ -530,15 +485,135 @@ def api_chat_send():
     success, resp = chat_bridge.send_chat_message(frame)
     if success:
         update_chat_message_status(msg_id, "delivered")
-        return jsonify({"status": "delivered", "message": frame, "response": resp}), 200
+        return True, {"status": "delivered", "message": frame, "response": resp}, 200
     else:
         frame["status"] = "failed"
         update_chat_message_status(msg_id, "failed")
-        return jsonify({
+        return False, {
             "status": "failed",
+            "code": "tcp_unreachable",
             "message": frame,
-            "error": f"Message saved to history, but live TCP delivery failed: {resp}"
-        }), 503
+            "error": f"Message saved to conversation history, but live TCP (:5001) failed: {resp}"
+        }, 503
+
+
+@app.route("/api/chat/conversations", methods=["GET"])
+@login_required
+def api_chat_conversations():
+    """
+    Returns ONLY private conversations where the authenticated user is a participant,
+    plus available registered lab contacts to initiate new direct conversations.
+    """
+    user = session["user"]
+    devices = get_network_status()
+    online_user_names = {d.get("user_name") for d in devices if d.get("status") == "ONLINE" and d.get("user_name")}
+
+    conversations = list_user_conversations(user["id"], online_user_names=online_user_names)
+    contacts = list_available_contacts(user["id"], online_user_names=online_user_names)
+
+    return jsonify({
+        "conversations": conversations,
+        "contacts": contacts,
+        "tcp_bridge_connected": chat_bridge.connected
+    })
+
+
+@app.route("/api/chat/conversations/direct", methods=["POST"])
+@login_required
+def api_chat_create_direct():
+    """Atomically creates or retrieves the unique direct conversation between current user and recipient."""
+    user = session["user"]
+    data = request.json or {}
+    recipient_user_id = (data.get("recipient_user_id") or "").strip()
+    if not recipient_user_id:
+        return jsonify({"error": "recipient_user_id is required."}), 400
+
+    ok, result, status_code = get_or_create_direct_conversation(user["id"], recipient_user_id)
+    if ok:
+        return jsonify({"status": "ok", "conversation": result}), 200
+    return jsonify({"error": result}), status_code
+
+
+@app.route("/api/chat/conversations/<conversation_id>", methods=["GET"])
+@login_required
+def api_chat_conversation_detail(conversation_id):
+    """Returns conversation metadata and participants ONLY if authenticated user is a member."""
+    user = session["user"]
+    ok, result, status_code = get_conversation_detail(conversation_id, user["id"])
+    if ok:
+        return jsonify({"conversation": result}), 200
+    return jsonify({"error": result}), status_code
+
+
+@app.route("/api/chat/conversations/<conversation_id>/messages", methods=["GET"])
+@login_required
+def api_chat_conversation_messages(conversation_id):
+    """
+    Retrieves paginated chronological messages strictly for ONE authorized conversation.
+    Returns 403 Forbidden if authenticated user is not a participant.
+    """
+    user = session["user"]
+    limit = min(max(int(request.args.get("limit", 50)), 1), 200)
+    before_iso = request.args.get("before") or None
+
+    ok, rows_or_err, status_code = list_conversation_messages(
+        conversation_id=conversation_id,
+        requesting_user_id=user["id"],
+        limit=limit,
+        before_iso=before_iso
+    )
+    if not ok:
+        return jsonify({"error": rows_or_err}), status_code
+
+    formatted = [_format_chat_row(r) for r in rows_or_err]
+    has_more = len(rows_or_err) == limit
+    oldest_cursor = formatted[0]["sent_at"] if formatted else None
+
+    return jsonify({
+        "conversation_id": conversation_id,
+        "messages": formatted,
+        "has_more": has_more,
+        "oldest_cursor": oldest_cursor,
+        "tcp_bridge_connected": chat_bridge.connected
+    }), 200
+
+
+@app.route("/api/chat/history", methods=["GET"])
+@login_required
+def api_chat_history():
+    """
+    Backwards-compatible history endpoint requiring explicit `conversation_id`
+    and enforcing strict participant authorization. Never returns global messages.
+    """
+    conversation_id = (request.args.get("conversation_id") or "").strip()
+    if not conversation_id:
+        return jsonify({"error": "conversation_id query parameter is required."}), 400
+    return api_chat_conversation_messages(conversation_id)
+
+
+@app.route("/api/chat/conversations/<conversation_id>/messages", methods=["POST"])
+@login_required
+def api_chat_conversation_send(conversation_id):
+    user = session["user"]
+    data = request.json or {}
+    message_text = (data.get("message") or data.get("text") or "").strip()
+    client_ip = request.remote_addr or "127.0.0.1"
+
+    ok, payload, status_code = _send_conversation_message_core(user, conversation_id, message_text, client_ip)
+    return jsonify(payload), status_code
+
+
+@app.route("/api/chat/send", methods=["POST"])
+@login_required
+def api_chat_send():
+    user = session["user"]
+    data = request.json or {}
+    conversation_id = (data.get("conversation_id") or "").strip()
+    message_text = (data.get("message") or data.get("text") or "").strip()
+    client_ip = request.remote_addr or "127.0.0.1"
+
+    ok, payload, status_code = _send_conversation_message_core(user, conversation_id, message_text, client_ip)
+    return jsonify(payload), status_code
 
 
 # ============================================================================
@@ -952,12 +1027,15 @@ def api_diagnostics(command):
 
 
 # ============================================================================
-# WebSocket (Socket.IO) Events
+# WebSocket (Socket.IO) Events — Strictly Isolated Conversation Rooms
 # ============================================================================
 
 @socketio.on("connect")
 def handle_connect():
     user = session.get("user")
+    if user and user.get("id"):
+        # Join ONLY this authenticated user's private notification room
+        join_room(f"user:{user['id']}")
     emit("connection_status", {
         "status": "CONNECTED",
         "authenticated": bool(user),
@@ -967,79 +1045,90 @@ def handle_connect():
     })
 
 
-@socketio.on("chat_send")
-def handle_chat_send(data):
+@socketio.on("join_conversation")
+def handle_join_conversation(data):
     """
-    Handles real-time WebSocket chat message from authenticated browser.
-    1. Persists message in Supabase `chat_messages` (authoritative sender from session).
-    2. Dispatches canonical frame (with DB UUID) over raw TCP socket to port 5001.
-    3. Updates delivery state (`delivered` vs `failed`) cleanly.
+    Authorizes and joins a browser socket strictly to `conversation:<conversation_id>`.
+    Leaves any previously active `conversation:*` rooms on this socket so switching
+    from A-B to A-C cleanly stops delivering A-B live events to the A-C panel.
     """
     user = session.get("user")
     if not user or not user.get("id"):
-        emit("chat_error", {"error": "Authentication required to send messages."})
+        emit("conversation_error", {"code": "unauthorized", "error": "Authentication required."})
         return
 
-    text = (data.get("text") or "").strip()
-    if not text:
-        emit("chat_error", {"error": "Empty message cannot be transmitted."})
-        return
-    if len(text) > 4000:
-        emit("chat_error", {"error": "Message exceeds maximum length (4000 chars)."})
+    conv_id = ((data or {}).get("conversation_id") or "").strip()
+    if not conv_id:
+        emit("conversation_error", {"code": "missing_conversation", "error": "conversation_id is required."})
         return
 
+    # Mandatory participant authorization check
+    if not is_user_participant(conv_id, user["id"]):
+        emit("conversation_error", {
+            "code": "forbidden",
+            "conversation_id": conv_id,
+            "error": "Forbidden: you are not a participant in this conversation."
+        })
+        return
+
+    target_room = f"conversation:{conv_id}"
+    # Leave all previously joined conversation rooms on this socket
+    for r in list(rooms()):
+        if isinstance(r, str) and r.startswith("conversation:") and r != target_room:
+            leave_room(r)
+
+    join_room(target_room)
+    emit("joined_conversation", {
+        "conversation_id": conv_id,
+        "room": target_room,
+        "status": "joined"
+    })
+
+
+@socketio.on("leave_conversation")
+def handle_leave_conversation(data):
+    conv_id = ((data or {}).get("conversation_id") or "").strip()
+    if conv_id:
+        leave_room(f"conversation:{conv_id}")
+        emit("left_conversation", {"conversation_id": conv_id})
+
+
+@socketio.on("chat_send")
+def handle_chat_send(data):
+    """
+    Handles real-time WebSocket chat message strictly scoped to an authorized `conversation_id`.
+    1. Verifies session authentication AND participant membership in `conversation_id`.
+    2. Persists message in Supabase `chat_messages` with `conversation_id`.
+    3. Dispatches canonical frame over raw TCP socket (:5001); on_tcp_chat_broadcast emits
+       strictly `to="conversation:<conversation_id>"` (NEVER global broadcast).
+    """
+    user = session.get("user")
+    if not user or not user.get("id"):
+        emit("chat_error", {"code": "unauthorized", "error": "Authentication required to send messages."})
+        return
+
+    payload_in = data or {}
+    conversation_id = (payload_in.get("conversation_id") or "").strip()
+    text = (payload_in.get("text") or payload_in.get("message") or "").strip()
     client_ip = request.remote_addr or "127.0.0.1"
-    dev = get_device_by_ip(client_ip)
-    dev_id = dev["id"] if dev else None
 
-    msg_id = str(uuid.uuid4())
-    ok_db, db_row = record_chat_message(
-        sender_user_id=user["id"],
-        message=text,
-        protocol="TCP",
-        status="sent",
-        sender_device_id=dev_id,
-        message_id=msg_id
-    )
-    if not ok_db:
-        emit("chat_error", {"id": msg_id, "error": f"Failed to persist message to database: {db_row}"})
-        return
-
-    sent_at = db_row.get("sent_at") if isinstance(db_row, dict) else datetime.datetime.now(datetime.timezone.utc).isoformat()
-    timestamp = sent_at.replace("T", " ")[:19]
-
-    frame = {
-        "id": msg_id,
-        "type": "chat",
-        "sender_user_id": user["id"],
-        "sender": user["display_name"],
-        "sender_role": user["role"],
-        "device_ip": client_ip,
-        "text": text,
-        "protocol": "TCP",
-        "status": "delivered",
-        "sent_at": sent_at,
-        "timestamp": timestamp
-    }
-
-    success, resp = chat_bridge.send_chat_message(frame)
-    if success:
-        update_chat_message_status(msg_id, "delivered")
+    ok, result, status_code = _send_conversation_message_core(user, conversation_id, text, client_ip)
+    if ok:
+        frame = result["message"]
         emit("chat_ack", {
-            "id": msg_id,
+            "id": frame["id"],
+            "conversation_id": conversation_id,
             "status": "delivered",
-            "timestamp": timestamp,
+            "timestamp": frame["timestamp"],
             "message": frame
         })
     else:
-        frame["status"] = "failed"
-        update_chat_message_status(msg_id, "failed")
-        # Still emit the failed message to the sender so UI shows failed state honestly
         emit("chat_error", {
-            "id": msg_id,
-            "status": "failed",
-            "message": frame,
-            "error": f"Saved in history, but TCP Chat Server (:5001) is unreachable: {resp}"
+            "code": result.get("code", "error"),
+            "conversation_id": conversation_id,
+            "status": result.get("status", "failed"),
+            "message": result.get("message"),
+            "error": result.get("error", "Message transmission failed.")
         })
 
 

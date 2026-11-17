@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Live Chat{% endblock %}
-{% block page_title %}Live Research Chat{% endblock %}
-{% block page_subtitle %}Real-time TCP socket messaging (:5001) with Supabase persistent history{% endblock %}
+{% block page_title %}Private Research Chat{% endblock %}
+{% block page_subtitle %}Isolated direct conversations over TCP (:5001) &amp; authorized Socket.IO rooms backed by Supabase{% endblock %}
 {% block content_class %}full-bleed{% endblock %}
 
 {% block topbar_actions %}
@@ -13,64 +13,68 @@
 
 {% block content %}
 <div class="chat-workspace">
-    <!-- Panel 2: Conversations & Lab Participants -->
+    <!-- Panel 2: User's Isolated Conversations & Lab Contacts -->
     <section class="chat-sidebar-panel" aria-label="Conversations">
         <div class="chat-sidebar-header">
             <div class="chat-search-box">
                 <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="text" id="conv-search-input" placeholder="Search conversations..." oninput="filterConversations()">
+                <input type="text" id="conv-search-input" placeholder="Search chats or people..." oninput="renderSidebarLists()">
             </div>
             <div class="chat-filter-tabs">
-                <button type="button" class="chat-filter-tab active" id="filter-all" onclick="setConvFilter('all')">All</button>
-                <button type="button" class="chat-filter-tab" id="filter-online" onclick="setConvFilter('online')">Online</button>
+                <button type="button" class="chat-filter-tab active" id="filter-all" onclick="setConvFilter('all')">All Chats</button>
+                <button type="button" class="chat-filter-tab" id="filter-unread" onclick="setConvFilter('unread')">Unread</button>
             </div>
         </div>
 
         <div class="conv-list" id="conv-list">
             <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">
-                Loading conversations...
+                Loading your conversations...
             </div>
         </div>
     </section>
 
-    <!-- Panel 3: Active Conversation Workspace -->
+    <!-- Panel 3: Active Private Conversation Workspace -->
     <section class="chat-thread-panel" aria-label="Active Conversation">
         <div class="chat-thread-header">
             <div>
-                <div class="chat-thread-title" id="active-conv-title">LabNet General Channel</div>
-                <div class="chat-thread-sub" id="active-conv-sub">TCP Broadcast (:5001) • Persistent history backed by Supabase</div>
+                <div class="chat-thread-title" id="active-conv-title">Select a Conversation</div>
+                <div class="chat-thread-sub" id="active-conv-sub">Choose an existing chat or click a lab member to start a private direct conversation</div>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="badge badge-tcp"><i class="fa-solid fa-network-wired"></i> TCP :5001</span>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="reloadActiveConversation()" title="Reload history from Supabase">
+                <span class="badge badge-tcp" id="room-isolation-badge" style="display: none;">
+                    <i class="fa-solid fa-lock"></i> Private Room
+                </span>
+                <button type="button" class="btn btn-secondary btn-sm" id="btn-reload-conv" onclick="reloadActiveConversation()" title="Reload history from Supabase" disabled>
                     <i class="fa-solid fa-rotate"></i>
                 </button>
             </div>
         </div>
 
-        <!-- Dedicated Non-Intrusive Connection Status Strip (Separate from Chat Messages) -->
+        <!-- Dedicated Non-Intrusive Connection Status Strip -->
         <div class="chat-status-strip">
             <span id="presence-status-text">
                 <i class="fa-solid fa-shield-halved" style="color: var(--accent); margin-right: 4px;"></i>
                 Signed in as <strong>{{ current_user.display_name }}</strong> ({{ current_user.role }})
             </span>
-            <span id="delivery-status-text" class="mono">History synced</span>
+            <span id="delivery-status-text" class="mono">Isolated room mode</span>
         </div>
 
-        <!-- Message Stream -->
+        <!-- Isolated Message Stream -->
         <div class="chat-messages-scroll" id="chat-messages">
-            <div style="text-align: center; padding: 30px; color: var(--text-muted);">
-                <i class="fa-solid fa-spinner fa-spin"></i> Loading conversation history from Supabase...
+            <div style="margin: auto; text-align: center; color: var(--text-muted); max-width: 380px;">
+                <i class="fa-solid fa-lock" style="font-size: 28px; color: var(--border-strong); margin-bottom: 10px;"></i>
+                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">Private Conversation Isolation Active</div>
+                <div style="font-size: 12.5px;">Select an existing conversation on the left or click a lab member under <strong>Start New Direct Chat</strong> to open a private, encrypted-in-transit conversation.</div>
             </div>
         </div>
 
-        <!-- Message Composer -->
+        <!-- Message Composer (Enabled only when an authorized conversation is selected) -->
         <form class="chat-composer" onsubmit="handleChatFormSubmit(event)">
             <a href="/files" class="btn btn-secondary btn-sm" title="Send a file via TCP/UDP/P2P" style="padding: 9px 11px;">
                 <i class="fa-solid fa-paperclip"></i>
             </a>
-            <input type="text" id="chat-text-input" placeholder="Write a message to LabNet (persisted in Supabase &amp; streamed via TCP :5001)..." autocomplete="off" maxlength="4000">
-            <button type="submit" id="chat-send-btn" class="btn btn-primary" style="padding: 10px 18px;">
+            <input type="text" id="chat-text-input" placeholder="Select a conversation first..." autocomplete="off" maxlength="4000" disabled>
+            <button type="submit" id="chat-send-btn" class="btn btn-primary" style="padding: 10px 18px;" disabled>
                 <i class="fa-solid fa-paper-plane"></i>
                 <span>Send</span>
             </button>
