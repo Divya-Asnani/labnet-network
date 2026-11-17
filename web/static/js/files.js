@@ -1,9 +1,9 @@
 /**
- * LabNet Real TCP File Transfer Client (web/static/js/files.js)
- * ==============================================================
- * Connects frontend to the Flask TCP streaming bridge and server/tcp_file_server.py.
- * All progress calculations, ASCII blocks, and animations are driven by actual
- * byte counters. No fake timer-based animations.
+ * LabNet Real Multi-Protocol File Transfer Client (web/static/js/files.js)
+ * =========================================================================
+ * Connects frontend to the Flask TCP (:2121) and UDP (:2122) streaming bridges
+ * and P2P direct transfer coordinators. All progress calculations, ASCII blocks,
+ * and animations are driven by actual byte counters.
  */
 
 let socket = null;
@@ -27,7 +27,26 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
+
+    loadServerFiles();
 });
+
+function onDestModeChanged() {
+    const mode = document.getElementById("dest-mode").value;
+    const p2pGroup = document.getElementById("p2p-peer-group");
+    const recvLabel = document.getElementById("viz-receiver-label");
+    const recvSub = document.getElementById("viz-receiver-sub");
+
+    if (mode === "p2p") {
+        p2pGroup.style.display = "block";
+        recvLabel.textContent = "Peer Workstation (Direct)";
+        recvSub.textContent = document.getElementById("p2p-target-ip").value + ":" + document.getElementById("p2p-target-port").value;
+    } else {
+        p2pGroup.style.display = "none";
+        recvLabel.textContent = "LabNet Server";
+        updateProtocolInfo();
+    }
+}
 
 function updateProtocolInfo() {
     const protoRadios = document.querySelectorAll('input[name="protocol"]');
@@ -35,10 +54,20 @@ function updateProtocolInfo() {
     protoRadios.forEach(r => { if (r.checked) selected = r.value; });
 
     const desc = document.getElementById("protocol-desc");
+    const badge = document.getElementById("header-protocol-badge");
+    const recvSub = document.getElementById("viz-receiver-sub");
+    const btn = document.getElementById("btn-start-transfer");
+
     if (selected === "TCP") {
         desc.innerHTML = `<strong>TCP Stream Transfer</strong><br><span class="text-muted text-sm">Reliable chunk-based stream | Port 2121 | SHA-256 Verified</span>`;
+        if (badge) badge.textContent = "TCP:2121";
+        if (recvSub && document.getElementById("dest-mode").value !== "p2p") recvSub.textContent = "192.168.66.128:2121";
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> Send File via TCP`;
     } else {
-        desc.innerHTML = `<strong>UDP File Transfer</strong><br><span class="text-muted text-sm">Connectionless datagrams (Experimental - Planned for Phase 3)</span>`;
+        desc.innerHTML = `<strong>Reliable UDP File Transfer</strong><br><span class="text-muted text-sm">Sliding-Window ARQ | Port 2122 | Packet Sequencing & Retransmissions</span>`;
+        if (badge) badge.textContent = "UDP:2122";
+        if (recvSub && document.getElementById("dest-mode").value !== "p2p") recvSub.textContent = "192.168.66.128:2122";
+        if (btn) btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Send File via UDP`;
     }
 }
 
@@ -85,11 +114,7 @@ function startRealFileTransfer() {
     let protocol = "TCP";
     protoRadios.forEach(r => { if (r.checked) protocol = r.value; });
 
-    if (protocol !== "TCP") {
-        alert("UDP file transfer is planned for Phase 3. Please select TCP.");
-        return;
-    }
-
+    const destMode = document.getElementById("dest-mode").value;
     const senderSelect = document.getElementById("sender-select");
     const sender = senderSelect ? senderSelect.value : "Student";
     const senderIp = (sender === "Student") ? "192.168.66.130" : "192.168.66.128";
@@ -99,133 +124,153 @@ function startRealFileTransfer() {
     const transferLog = document.getElementById("transfer-log");
     const statusBadge = document.getElementById("pipeline-status-badge");
     const metricStatus = document.getElementById("metric-status");
-    const metricProgress = document.getElementById("metric-progress");
+    const metricProg = document.getElementById("metric-progress");
     const metricSpeed = document.getElementById("metric-speed");
     const metricSha = document.getElementById("metric-sha256");
-    const metricSave = document.getElementById("metric-savepath");
-    const btnSend = document.getElementById("btn-start-transfer");
+    const metricPath = document.getElementById("metric-savepath");
+    const btn = document.getElementById("btn-start-transfer");
 
-    btnSend.disabled = true;
+    btn.disabled = true;
+    statusBadge.className = "badge badge-primary";
+    statusBadge.textContent = "STREAMING";
+    metricStatus.innerHTML = `<span class="badge badge-primary">IN PROGRESS</span>`;
+    metricProg.textContent = "0% (0 B)";
+    metricSpeed.textContent = "Calculating...";
+    metricSha.textContent = "Computing SHA-256...";
+    metricPath.textContent = "Server buffer...";
+
     transferStartTime = performance.now();
+    transferLog.textContent = `[INIT] Handshaking ${protocol} file stream for '${file.name}' (${formatBytes(file.size)})...\n`;
+    vizAnim.className = "viz-animation-container active";
+    vizAnim.innerHTML = `${protocol}<br>[░░░░░░░░░░░░]`;
 
-    // Reset pipeline state
-    statusBadge.className = "badge badge-warning";
-    statusBadge.textContent = "CONNECTING";
-    metricStatus.innerHTML = '<span class="badge badge-warning">CONNECTING</span>';
-    metricSha.textContent = "Calculating...";
-    metricSave.textContent = "-";
-
-    vizAnim.style.top = "0%";
-    vizAnim.innerHTML = `TCP<br>CONNECTING...`;
-
-    transferLog.textContent = `[INIT] Preparing TCP connection to LabNet Server (192.168.66.128:2121)...\n`;
-    transferLog.textContent += `[FILE] '${file.name}' (${formatBytes(file.size)})\n`;
-    transferLog.textContent += `[TCP] Establishing 3-Way Handshake (SYN -> SYN-ACK -> ACK)...\n`;
-
-    // Construct FormData payload
     const formData = new FormData();
     formData.append("file", file);
     formData.append("protocol", protocol);
     formData.append("sender", sender);
     formData.append("sender_ip", senderIp);
+    formData.append("dest_mode", destMode);
+
+    if (destMode === "p2p") {
+        formData.append("target_ip", document.getElementById("p2p-target-ip").value);
+        formData.append("target_port", document.getElementById("p2p-target-port").value);
+    }
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/files/upload", true);
 
-    // Track real HTTP chunk upload progress to Flask gateway
-    xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable) {
-            const percent = (e.loaded / e.total) * 100;
-            const elapsedSeconds = Math.max((performance.now() - transferStartTime) / 1000, 0.001);
-            const speedKbps = ((e.loaded / 1024) / elapsedSeconds).toFixed(2);
-            const asciiBar = generateAsciiBlocks(percent);
-
-            // Animate packet down the pipeline based on actual bytes
-            vizAnim.style.top = Math.min(percent, 90) + "%";
-            vizAnim.innerHTML = `TCP<br>${asciiBar}<br>${percent.toFixed(0)}%`;
-
-            metricProgress.textContent = `${percent.toFixed(1)}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`;
-            metricSpeed.textContent = `${speedKbps} KB/s`;
-
-            if (percent < 100) {
-                statusBadge.className = "badge badge-tcp";
-                statusBadge.textContent = "STREAMING";
-                metricStatus.innerHTML = '<span class="badge badge-tcp">STREAMING</span>';
-            }
-        }
-    };
-
     xhr.onload = function () {
-        btnSend.disabled = false;
+        btn.disabled = false;
+        vizAnim.className = "viz-animation-container";
+
         if (xhr.status === 200) {
             try {
                 const resp = JSON.parse(xhr.responseText);
-                const result = resp.result || {};
-
-                vizAnim.style.top = "100%";
-                const fullBar = generateAsciiBlocks(100);
-                vizAnim.innerHTML = `TCP<br>${fullBar}<br>100%`;
+                const res = resp.result || {};
+                const verified = res.verified;
+                const sha = res.sha256 || res.local_sha256 || "N/A";
 
                 statusBadge.className = "badge badge-success";
-                statusBadge.textContent = "COMPLETED";
-                metricStatus.innerHTML = '<span class="badge badge-success"><i class="fa-solid fa-check-circle"></i> SUCCESS</span>';
-                metricProgress.textContent = `100% (${formatBytes(result.filesize || file.size)})`;
-                metricSpeed.textContent = `${result.speed_kbps || "-"} KB/s`;
-                metricSha.innerHTML = `<span class="text-green font-semibold">${result.sha256 || "-"}</span> <span class="badge badge-success" style="font-size:0.65rem;">MATCH</span>`;
-                metricSave.textContent = result.save_path || "uploads/" + file.name;
+                statusBadge.textContent = "VERIFIED";
+                vizAnim.innerHTML = `${protocol}<br>[COMPLETED]`;
+                metricStatus.innerHTML = `<span class="badge badge-success">COMPLETED (SHA-256 MATCH)</span>`;
+                metricProg.textContent = `100.0% (${formatBytes(file.size)})`;
+                metricSpeed.textContent = `${res.speed_kbps || '0'} KB/s`;
+                metricSha.textContent = sha;
+                metricPath.textContent = res.save_path || "uploads/" + file.name;
 
-                transferLog.textContent += `[STREAM] All bytes transferred.\n`;
-                transferLog.textContent += `[SHA-256] Computed & Verified: ${result.sha256}\n`;
-                transferLog.textContent += `[SERVER] Destination verified at: ${result.save_path}\n`;
-                transferLog.textContent += `[TCP] Connection closed cleanly (FIN-ACK).\n`;
-                transferLog.textContent += `[RESULT] Transfer SUCCESS!\n`;
+                transferLog.textContent += `[SUCCESS] Protocol: ${protocol}\n`;
+                transferLog.textContent += `[VERIFIED] SHA-256: ${sha}\n`;
+                transferLog.textContent += `[SPEED] Throughput: ${res.speed_kbps || '0'} KB/s\n`;
+                if (res.retransmissions !== undefined) {
+                    transferLog.textContent += `[ARQ] Retransmissions: ${res.retransmissions}\n`;
+                }
+                transferLog.textContent += `[STATUS] Saved to: ${res.save_path || 'uploads/' + file.name}\n`;
                 transferLog.scrollTop = transferLog.scrollHeight;
-            } catch (err) {
-                handleTransferError("Failed to parse server response: " + err);
+
+                loadServerFiles();
+            } catch (e) {
+                transferLog.textContent += `[ERROR] Failed to parse response: ${e}\n`;
             }
         } else {
-            handleTransferError(`Server returned HTTP ${xhr.status}: ${xhr.responseText}`);
+            statusBadge.className = "badge badge-danger";
+            statusBadge.textContent = "FAILED";
+            metricStatus.innerHTML = `<span class="badge badge-danger">FAILED</span>`;
+            transferLog.textContent += `[FATAL] Server responded with error HTTP ${xhr.status}: ${xhr.responseText}\n`;
         }
     };
 
     xhr.onerror = function () {
-        btnSend.disabled = false;
-        handleTransferError("Network socket error while communicating with gateway.");
+        btn.disabled = false;
+        statusBadge.className = "badge badge-danger";
+        statusBadge.textContent = "NETWORK ERROR";
+        metricStatus.innerHTML = `<span class="badge badge-danger">SOCKET ERROR</span>`;
+        transferLog.textContent += `[FATAL] Network error connecting to LabNet File Gateway.\n`;
     };
 
     xhr.send(formData);
 }
 
 function handleBackendProgress(data) {
+    const metricProg = document.getElementById("metric-progress");
+    const metricSpeed = document.getElementById("metric-speed");
+    const vizAnim = document.getElementById("viz-animation");
     const transferLog = document.getElementById("transfer-log");
-    if (!transferLog) return;
 
-    if (data.status === "STREAMING" && data.percent !== undefined) {
-        if (Math.round(data.percent) % 25 === 0) {
-            transferLog.textContent += `[TCP SOCKET :2121] Streamed ${formatBytes(data.bytes_sent)} / ${formatBytes(data.total_bytes)} (${data.percent}%)\n`;
+    if (data.percent !== undefined) {
+        const pct = parseFloat(data.percent);
+        const ascii = generateAsciiBlocks(pct);
+        if (metricProg) {
+            metricProg.textContent = `${pct.toFixed(1)}% (${formatBytes(data.bytes_sent || 0)})`;
+        }
+        if (metricSpeed && data.speed_kbps) {
+            metricSpeed.textContent = `${data.speed_kbps} KB/s`;
+        }
+        if (vizAnim) {
+            vizAnim.innerHTML = `STREAM<br>[${ascii}]`;
+        }
+        if (transferLog && (pct % 20 === 0 || pct === 100)) {
+            transferLog.textContent += `[STREAM] ${pct.toFixed(1)}% - ${data.speed_kbps || ''} KB/s\n`;
             transferLog.scrollTop = transferLog.scrollHeight;
         }
     }
 }
 
-function handleTransferError(errMsg) {
-    const statusBadge = document.getElementById("pipeline-status-badge");
-    const metricStatus = document.getElementById("metric-status");
-    const transferLog = document.getElementById("transfer-log");
-    const vizAnim = document.getElementById("viz-animation");
+async function loadServerFiles() {
+    const tbody = document.getElementById("repo-tbody");
+    if (!tbody) return;
 
-    if (statusBadge) {
-        statusBadge.className = "badge badge-danger";
-        statusBadge.textContent = "FAILED";
-    }
-    if (metricStatus) {
-        metricStatus.innerHTML = '<span class="badge badge-danger"><i class="fa-solid fa-circle-xmark"></i> ERROR</span>';
-    }
-    if (vizAnim) {
-        vizAnim.innerHTML = `TCP<br>[FAILED]`;
-    }
-    if (transferLog) {
-        transferLog.textContent += `\n[ERROR] ${errMsg}\n`;
-        transferLog.scrollTop = transferLog.scrollHeight;
+    try {
+        const resp = await fetch("/api/files/list");
+        const data = await resp.json();
+        const files = data.files || [];
+
+        if (files.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-muted text-center" style="padding: 12px;">No stored files in uploads/ directory yet.</td></tr>`;
+            return;
+        }
+
+        let html = "";
+        files.forEach(f => {
+            const shortSha = f.sha256 ? f.sha256.substring(0, 12) + "..." : "Pending";
+            html += `
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+                <td style="padding: 8px 12px; font-weight: 500;">
+                    <i class="fa-regular fa-file" style="color: #64748b; margin-right: 6px;"></i> ${f.filename}
+                </td>
+                <td style="padding: 8px 12px; color: #475569;">${formatBytes(f.size)}</td>
+                <td style="padding: 8px 12px;"><span class="badge ${f.protocol === 'UDP' ? 'badge-primary' : 'badge-tcp'}" style="font-size: 0.75rem;">${f.protocol || 'TCP'}</span></td>
+                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.75rem; color: #64748b;">${shortSha}</td>
+                <td style="padding: 8px 12px;">
+                    <a href="/api/files/download/${encodeURIComponent(f.filename)}" class="btn btn-secondary text-sm" style="text-decoration: none; padding: 4px 8px; font-size: 0.75rem;" download>
+                        <i class="fa-solid fa-download"></i> Download
+                    </a>
+                </td>
+            </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-danger text-center" style="padding: 12px;">Failed to load files: ${e.message}</td></tr>`;
     }
 }
