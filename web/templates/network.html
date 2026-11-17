@@ -1,50 +1,121 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="grid-layout">
+    <!-- Left Column: Core Stats & Diagnostics -->
     <div class="card col-main">
-        <div class="card-header">Network Monitoring Statistics</div>
+        <div class="card-header d-flex justify-between align-center">
+            <span><i class="fa-solid fa-chart-line"></i> Network Monitoring & Node Discovery</span>
+            <span class="badge badge-success" id="stat-server-status">SERVER ONLINE</span>
+        </div>
         <table class="table">
             <tbody>
                 <tr>
-                    <td class="font-semibold">Server IP</td>
+                    <td class="font-semibold" style="width: 35%;">Central Server IP</td>
                     <td id="stat-server-ip">192.168.66.128</td>
                 </tr>
                 <tr>
-                    <td class="font-semibold">Server Status</td>
-                    <td id="stat-server-status" class="text-green font-semibold">ONLINE</td>
+                    <td class="font-semibold">Active Node Connections</td>
+                    <td id="stat-clients">0 Workstations</td>
                 </tr>
                 <tr>
-                    <td class="font-semibold">Active Clients</td>
-                    <td id="stat-clients">0</td>
+                    <td class="font-semibold">TCP Service Ports</td>
+                    <td><span class="badge badge-tcp">Chat: 5001</span> <span class="badge badge-tcp">File: 2121</span> <span class="badge badge-secondary">Portal: 5050</span></td>
                 </tr>
                 <tr>
-                    <td class="font-semibold">TCP Connections</td>
-                    <td id="stat-tcp">0</td>
-                </tr>
-                <tr>
-                    <td class="font-semibold">UDP Messages</td>
-                    <td id="stat-udp">0</td>
+                    <td class="font-semibold">UDP Service Ports</td>
+                    <td><span class="badge badge-primary">Heartbeat: 6000</span> <span class="badge badge-primary">File: 2122</span></td>
                 </tr>
                 <tr>
                     <td class="font-semibold">Bytes Transferred</td>
                     <td id="stat-bytes">0 B</td>
                 </tr>
                 <tr>
-                    <td class="font-semibold">Last Heartbeat</td>
+                    <td class="font-semibold">Last UDP Heartbeat</td>
                     <td id="stat-heartbeat">-</td>
                 </tr>
             </tbody>
         </table>
-        
-        <h3 class="section-title mt-4">Diagnostic Tools</h3>
-        <div class="button-row">
-            <button class="btn btn-secondary" onclick="runDiag('ping')">PING SERVER</button>
-            <button class="btn btn-secondary" onclick="runDiag('traceroute')">TRACE ROUTE</button>
-            <button class="btn btn-secondary" onclick="runDiag('tcp_connections')">TCP CONNECTIONS</button>
-            <button class="btn btn-secondary" onclick="runDiag('udp_status')">UDP STATUS</button>
+
+        <!-- Registered Devices (Live from Database / Heartbeat Server) -->
+        <h3 class="section-title mt-4"><i class="fa-solid fa-laptop-code"></i> Live Registered Workstations</h3>
+        <table class="table text-sm" style="width: 100%;">
+            <thead>
+                <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+                    <th>Workstation Name</th>
+                    <th>IP Address</th>
+                    <th>Transport</th>
+                    <th>Status</th>
+                    <th>Last Heartbeat</th>
+                </tr>
+            </thead>
+            <tbody id="nodes-tbody">
+                <tr><td colspan="5" class="text-muted text-center" style="padding: 10px;">Querying registered devices...</td></tr>
+            </tbody>
+        </table>
+
+        <!-- ICMP & System Network Diagnostics -->
+        <h3 class="section-title mt-4"><i class="fa-solid fa-terminal"></i> Network Diagnostics & Inspection</h3>
+        <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center;">
+            <label style="font-size: 0.85rem; font-weight: 600; color: #475569;">Target Host:</label>
+            <input type="text" id="diag-target-ip" class="form-input" style="flex: 1; padding: 6px 10px;" value="192.168.66.128">
         </div>
-        <pre class="terminal" id="diag-terminal">Select a diagnostic tool to run...</pre>
+        <div class="button-row" style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('ping')">PING</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('traceroute')">TRACEROUTE</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('routes')">ROUTING TABLE</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('interfaces')">INTERFACES</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('sockets')">LISTENING SOCKETS</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('tcp_connections')">TCP SESSIONS</button>
+            <button class="btn btn-secondary text-sm" onclick="runCustomDiag('udp_status')">UDP STATUS</button>
+        </div>
+        <pre class="terminal" id="diag-terminal" style="max-height: 220px; overflow-y: auto;">Ready for network diagnostics. Select a tool above...</pre>
+    </div>
+
+    <!-- Right Column: DNS, SMTP, POP3 Network Services -->
+    <div class="card col-side">
+        <!-- Section 4.2: DNS Resolution -->
+        <div class="card-header"><i class="fa-solid fa-globe"></i> DNS Client Service</div>
+        <div style="padding: 12px;">
+            <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                <input type="text" id="dns-domain" class="form-input" style="flex: 2;" placeholder="Domain (e.g. localhost)" value="localhost">
+                <select id="dns-type" class="form-select" style="flex: 1; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px;">
+                    <option value="A">A (IPv4)</option>
+                    <option value="AAAA">AAAA (IPv6)</option>
+                    <option value="PTR">PTR (Reverse)</option>
+                </select>
+            </div>
+            <button class="btn btn-primary w-100 text-sm" onclick="runDnsLookup()">
+                <i class="fa-solid fa-magnifying-glass"></i> Resolve DNS Query
+            </button>
+            <pre class="terminal mt-2" id="dns-terminal" style="font-size: 0.75rem; max-height: 140px; overflow-y: auto;">Enter domain to inspect DNS resolution...</pre>
+        </div>
+
+        <!-- Section 4.3: SMTP Email Transmission -->
+        <div class="card-header mt-3"><i class="fa-solid fa-envelope"></i> SMTP Mail Service (Port 1025)</div>
+        <div style="padding: 12px;">
+            <input type="email" id="smtp-to" class="form-input mb-2" placeholder="Recipient (student@labnet.local)" value="student@labnet.local" style="width: 100%;">
+            <input type="text" id="smtp-subject" class="form-input mb-2" placeholder="Subject" value="LabNet Research Update" style="width: 100%;">
+            <textarea id="smtp-body" class="form-input mb-2" rows="2" style="width: 100%; font-size: 0.8rem;">Data acquisition run completed on VM2.</textarea>
+            <button class="btn btn-secondary w-100 text-sm" onclick="sendSmtpEmail()">
+                <i class="fa-solid fa-paper-plane"></i> Send Notification via SMTP
+            </button>
+            <div id="smtp-result" class="text-sm mt-1" style="font-family: monospace; font-size: 0.75rem; color: #475569;"></div>
+        </div>
+
+        <!-- Section 4.4: POP3 Mail Retrieval -->
+        <div class="card-header mt-3"><i class="fa-solid fa-inbox"></i> POP3 Mail Retrieval (Port 1100)</div>
+        <div style="padding: 12px;">
+            <button class="btn btn-secondary w-100 text-sm mb-2" onclick="fetchPop3Mail()">
+                <i class="fa-solid fa-download"></i> Fetch Inbox via POP3
+            </button>
+            <div id="pop3-result" style="font-size: 0.75rem; max-height: 140px; overflow-y: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 6px; border-radius: 4px;">
+                Click above to connect to POP3 service...
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/app.js') }}"></script><script src="{{ url_for('static', filename='js/network.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/network.js') }}"></script>
+{% endblock %}
