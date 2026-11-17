@@ -1,33 +1,85 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="chat-wrapper">
-    <div class="protocol-banner">
-        <strong>Protocol Indicator:</strong> 
-        <span class="badge badge-tcp">TCP</span>
-        <span class="text-muted text-sm ml-2">Transport: Reliable, connection-oriented | Server: 192.168.66.128 | Port: 5000</span>
-    </div>
-
-    <div class="chat-grid">
-        <!-- Student Window -->
-        <div class="card chat-window">
-            <div class="card-header bg-student">Student Browser Window (192.168.66.130)</div>
-            <div class="chat-history" id="student-history"></div>
-            <div class="chat-controls">
-                <input type="text" id="student-input" placeholder="Type message as Student..." class="form-input">
-                <button class="btn btn-primary" onclick="sendChat('Student', 'student-input')">Send</button>
+    <!-- Network & Protocol Information Panel -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-between align-center">
+            <span><i class="fa-solid fa-comments"></i> Real-Time TCP Chat Portal</span>
+            <div id="conn-badge" class="badge badge-warning">
+                <i class="fa-solid fa-circle-notch fa-spin"></i> CONNECTING
             </div>
         </div>
-
-        <!-- Faculty Window -->
-        <div class="card chat-window">
-            <div class="card-header bg-faculty">Faculty Browser Window (192.168.66.131)</div>
-            <div class="chat-history" id="faculty-history"></div>
-            <div class="chat-controls">
-                <input type="text" id="faculty-input" placeholder="Type message as Faculty..." class="form-input">
-                <button class="btn btn-primary" onclick="sendChat('Faculty', 'faculty-input')">Send</button>
+        <div class="net-info-grid">
+            <div class="net-info-item">
+                <span class="label">Subnet:</span>
+                <span class="value">192.168.66.0/24</span>
             </div>
+            <div class="net-info-item">
+                <span class="label">Server IP:</span>
+                <span class="value" id="disp-server-ip">192.168.66.128</span>
+            </div>
+            <div class="net-info-item">
+                <span class="label">Transport:</span>
+                <span class="value font-semibold text-blue">TCP (Port 5001)</span>
+            </div>
+            <div class="net-info-item">
+                <span class="label">Web Gateway:</span>
+                <span class="value">Flask + WebSocket (Port 8000)</span>
+            </div>
+            <div class="net-info-item">
+                <span class="label">Packets Sent:</span>
+                <span class="value" id="stats-sent">0</span>
+            </div>
+            <div class="net-info-item">
+                <span class="label">Packets Recv:</span>
+                <span class="value" id="stats-recv">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- User / Device Identity Bar -->
+    <div class="card mb-4 bg-light">
+        <div class="d-flex align-center gap-3 flex-wrap">
+            <div class="d-flex align-center gap-2">
+                <label for="user-select" class="font-semibold text-sm">Active User:</label>
+                <select id="user-select" class="form-input form-select" onchange="changeUser()">
+                    <option value="Researcher" selected>Researcher (VM1)</option>
+                    <option value="Student">Student (VM2)</option>
+                    <option value="Faculty">Faculty Workstation</option>
+                    <option value="Custom">Custom User...</option>
+                </select>
+            </div>
+            <div id="custom-user-wrap" style="display: none;">
+                <input type="text" id="custom-user-input" class="form-input" placeholder="Enter username..." style="width: 150px;">
+            </div>
+            <div class="text-sm text-muted">
+                <strong>Device IP:</strong> <span id="disp-device-ip">192.168.66.128</span>
+            </div>
+            <div class="text-sm text-muted ml-auto">
+                <strong>Socket Route:</strong> Browser &rarr; WS &rarr; Flask &rarr; TCP:5001 &rarr; Broadcast
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat Window -->
+    <div class="card chat-box-main">
+        <div class="chat-history-container" id="chat-messages">
+            <div class="system-message">
+                <i class="fa-solid fa-info-circle"></i> Connecting to LabNet TCP Chat Server on port 5001...
+            </div>
+        </div>
+        <div class="chat-input-row">
+            <input type="text" id="chat-text-input" class="form-input" placeholder="Type message to broadcast across TCP socket..." autocomplete="off">
+            <button class="btn btn-primary" id="btn-chat-send" onclick="sendChatMessage()">
+                <i class="fa-solid fa-paper-plane"></i> Send
+            </button>
+        </div>
+        <div class="chat-footer-status text-sm text-muted" id="chat-delivery-status">
+            Ready to communicate.
         </div>
     </div>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/chat.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

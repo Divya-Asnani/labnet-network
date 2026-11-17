@@ -9,9 +9,12 @@ def handle_client(client_socket, client_address):
     print(f"[+] Client connected: {client_address}")
 
     try:
-        data = client_socket.recv(1024)
+        while True:
+            data = client_socket.recv(1024)
 
-        if data:
+            if not data:
+                break
+
             message = data.decode()
             print(f"[{client_address}] {message}")
 
